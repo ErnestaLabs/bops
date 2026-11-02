@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+N="${1:?display required}"
+case "$N" in 99|100|101|102) ;; *) exit 2 ;; esac
+PORT=$((9200 + N))
+if curl -fsS --max-time 1 "http://127.0.0.1:$PORT/json/version" >/dev/null; then exit 0; fi
+PROFILE="/root/profiles/s$N"
+mkdir -p "$PROFILE" /var/log/bops
+rm -f "$PROFILE/SingletonLock" "$PROFILE/SingletonCookie" "$PROFILE/SingletonSocket"
+# Chromium is sandboxed by the dedicated container, not the host process.
+DISPLAY=":$N" nohup chromium --no-sandbox --disable-dev-shm-usage \
+  --no-first-run --no-default-browser-check --disable-background-networking \
+  --remote-debugging-address=127.0.0.1 --remote-debugging-port="$PORT" \
+  --user-data-dir="$PROFILE" --start-maximized "${2:-about:blank}" \
+  >"/var/log/bops/chrome-$N.log" 2>&1 </dev/null &

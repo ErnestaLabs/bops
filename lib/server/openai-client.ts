@@ -1,49 +1,13 @@
-import OpenAI, { type ClientOptions } from "openai";
-import { APP_VERSION_HEADER, BOPS_STATE_LEVEL_HEADER, STATE_LEVEL, TELEMETRY_HEADER } from "@/cloud/protocol";
-import { appVersion, telemetryHere } from "./app-version";
-import { cloudProxy } from "./cloud";
+import type { ClientOptions } from "openai";
+import { openaiClient as legacyClient } from "./openai-client-legacy";
+import { privateClient } from "@/private-runtime/inference.mjs";
 
-/**
- * Transitional SDK adapter. BOPS_PRIVATE_RUNTIME routes compatible SDK calls
- * to a customer-selected endpoint and never proxies those calls through Bops Cloud.
- * This alone does not implement Responses, computer tools, Agents or realtime.
+/** Keep the existing Bops call sites; private mode translates to hosted Chat Completions.
+ * The cast is an integration boundary, not a claim of full SDK compatibility.
+ * Unsupported SDK surfaces fail explicitly without contacting a legacy provider.
  */
-export function openaiClient(opts: Omit<ClientOptions, "apiKey" | "defaultHeaders"> = {}) {
-  const privateMode = process.env.BOPS_PRIVATE_RUNTIME === "1";
-  const baseUrl = process.env.BOPS_INFERENCE_BASE_URL?.trim().replace(/\/+$/, "");
-  if (privateMode) {
-    if (!baseUrl) throw new Error("BOPS_INFERENCE_BASE_URL is required in private runtime mode");
-    const u = new URL(baseUrl);
-    if (u.protocol !== "https:" && !(u.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(u.hostname))) {
-      throw new Error("Private inference endpoint must use HTTPS or loopback HTTP");
-    }
-  }
-  const client = new OpenAI({
-    ...opts,
-    defaultHeaders: privateMode ? {} : {
-      get [APP_VERSION_HEADER]() { return cloudProxy("openai") ? (appVersion() ?? null) : null; },
-      get [BOPS_STATE_LEVEL_HEADER]() { return cloudProxy("openai") ? String(STATE_LEVEL) : null; },
-      get [TELEMETRY_HEADER]() { return cloudProxy("openai") && !telemetryHere() ? "off" : null; },
-    },
-    apiKey: async () => {
-      if (privateMode) return process.env.BOPS_INFERENCE_API_KEY || "local-no-key";
-      const via = cloudProxy("openai");
-      if (via) return via.key;
-      const key = process.env.OPENAI_API_KEY;
-      if (!key) throw new OpenAI.OpenAIError("No OpenAI key is set");
-      return key;
-    },
-    ...(privateMode ? { baseURL: baseUrl } : {}),
-  });
-  if (privateMode) return client;
-  let direct = client.baseURL;
-  Object.defineProperty(client, "baseURL", {
-    get: () => {
-      const via = cloudProxy("openai");
-      return via ? `${via.url}/v1` : direct;
-    },
-    set: (url: string) => void (direct = url),
-    configurable: true,
-  });
-  return client;
+export function openaiClient(opts: Omit<ClientOptions, "apiKey" | "defaultHeaders"> = {}): ReturnType<typeof legacyClient> {
+  return process.env.BOPS_PRIVATE_RUNTIME === "1"
+    ? privateClient() as unknown as ReturnType<typeof legacyClient>
+    : legacyClient(opts);
 }

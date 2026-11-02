@@ -2,26 +2,37 @@ name: Private runtime
 on:
   push:
     branches: [feat/private-provider-foundation]
+  pull_request:
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Runtime unit tests (no provider credentials)
+        run: node --test private-runtime/test/*.test.mjs
+      - name: Python and shell syntax
+        run: |
+          python3 -m py_compile private-runtime/worker/display.py
+          bash -n private-runtime/worker/bops-chrome
+      - name: Build customer-owned worker
+        run: docker build -f private-runtime/worker/Dockerfile -t ernesta-bops-worker:private .
+      - name: Real worker acceptance (no network, no AI keys)
+        run: node private-runtime/docker-smoke.mjs
       - name: Source snapshot for reproducible verification
+        if: always()
         run: git archive --format=tar.gz -o "$RUNNER_TEMP/source.tar.gz" HEAD
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
           name: private-runtime-source
           path: ${{ runner.temp }}/source.tar.gz
           retention-days: 3
-      - name: Worker unit tests
-        run: python3 -m unittest discover -s private-runtime -p 'test_*.py' -v
-      - name: Runtime tests
-        run: |
-          if test -d private-runtime/test; then node --test private-runtime/test/*.test.mjs; fi
