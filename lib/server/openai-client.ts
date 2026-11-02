@@ -4,38 +4,38 @@ import { appVersion, telemetryHere } from "./app-version";
 import { cloudProxy } from "./cloud";
 
 /**
- * An OpenAI client that finds its key when it makes a call, not when its module loads. Signed in
- * with Orgo, calls go through Bops Cloud (lib/server/cloud.ts) on the user's Orgo key. The base URL
- * is read per call too, so a sign-in or sign-out applies at once, and the live call sideband
- * (phone.ts), which builds its WebSocket address from the client's, goes through the cloud as well.
- * Self-hosting, it's OPENAI_API_KEY: the Mac app ships with no keys, and a client made with
- * `new OpenAI()` throws on import without one, which takes down every route that imports it.
+ * Transitional SDK adapter. BOPS_PRIVATE_RUNTIME routes compatible SDK calls
+ * to a customer-selected endpoint and never proxies those calls through Bops Cloud.
+ * This alone does not implement Responses, computer tools, Agents or realtime.
  */
 export function openaiClient(opts: Omit<ClientOptions, "apiKey" | "defaultHeaders"> = {}) {
+  const privateMode = process.env.BOPS_PRIVATE_RUNTIME === "1";
+  const baseUrl = process.env.BOPS_INFERENCE_BASE_URL?.trim().replace(/\/+$/, "");
+  if (privateMode) {
+    if (!baseUrl) throw new Error("BOPS_INFERENCE_BASE_URL is required in private runtime mode");
+    const u = new URL(baseUrl);
+    if (u.protocol !== "https:" && !(u.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(u.hostname))) {
+      throw new Error("Private inference endpoint must use HTTPS or loopback HTTP");
+    }
+  }
   const client = new OpenAI({
     ...opts,
-    // Which app is calling, and which state it may be given (an older app's calls are refused once a
-    // newer one wrote the user's state: cloud/state.ts behindState), said to Bops Cloud only: read at
-    // each call (and each sideband socket), and left out (null) when the app calls OpenAI directly.
-    defaultHeaders: {
-      get [APP_VERSION_HEADER]() {
-        return cloudProxy("openai") ? (appVersion() ?? null) : null;
-      },
-      get [BOPS_STATE_LEVEL_HEADER]() {
-        return cloudProxy("openai") ? String(STATE_LEVEL) : null;
-      },
-      get [TELEMETRY_HEADER]() {
-        return cloudProxy("openai") && !telemetryHere() ? "off" : null;
-      },
+    defaultHeaders: privateMode ? {} : {
+      get [APP_VERSION_HEADER]() { return cloudProxy("openai") ? (appVersion() ?? null) : null; },
+      get [BOPS_STATE_LEVEL_HEADER]() { return cloudProxy("openai") ? String(STATE_LEVEL) : null; },
+      get [TELEMETRY_HEADER]() { return cloudProxy("openai") && !telemetryHere() ? "off" : null; },
     },
     apiKey: async () => {
+      if (privateMode) return process.env.BOPS_INFERENCE_API_KEY || "local-no-key";
       const via = cloudProxy("openai");
       if (via) return via.key;
       const key = process.env.OPENAI_API_KEY;
-      if (!key) throw new OpenAI.OpenAIError(process.env.BOPS_SELF_HOSTED === "1" ? "No OpenAI key is set: add OPENAI_API_KEY to .env.local." : "Sign in with Orgo first.");
+      if (!key) throw new OpenAI.OpenAIError("No OpenAI key is set");
       return key;
     },
+    ...(privateMode ? { baseURL: baseUrl } : {}),
   });
+  if (privateMode) return client;
   let direct = client.baseURL;
   Object.defineProperty(client, "baseURL", {
     get: () => {
