@@ -4,6 +4,7 @@
 import { createServer } from 'node:http';
 import next from 'next';
 import { authorizeRequest, rejectRequest } from './http-auth.mjs';
+if (process.env.BOPS_ACCEPTANCE_TRACE === '1') await import('./task-trace.mjs');
 const port = Number(process.env.PORT) || 3210;
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid PORT.');
 const dev = process.argv.includes('--dev');

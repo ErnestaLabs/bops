@@ -13,6 +13,7 @@ jobs:
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       NEXT_TELEMETRY_DISABLED: "1"
+      BOPS_ACCEPTANCE_TRACE: "1"
       # The full Next production build exceeded Node's default 2 GiB heap.
       # This is CI build capacity, not a local model/GPU requirement.
       NODE_OPTIONS: "--max-old-space-size=4096"
@@ -30,6 +31,7 @@ jobs:
         run: |
           python3 -m py_compile private-runtime/worker/display.py
           bash -n private-runtime/worker/bops-chrome
+          bash -n vm/bin/bops-chrome
       - name: Build customer-owned worker
         run: docker build -f private-runtime/worker/Dockerfile -t ernesta-bops-worker:private .
       - name: Real worker acceptance (no network, no AI keys)
@@ -42,7 +44,10 @@ jobs:
         if: always()
         with:
           name: private-app-acceptance-logs
-          path: .scratch/app-acceptance
+          path: |
+            .scratch/app-acceptance
+            .next/server
+          include-hidden-files: true
           retention-days: 3
       - name: Source snapshot for reproducible verification
         if: always()
