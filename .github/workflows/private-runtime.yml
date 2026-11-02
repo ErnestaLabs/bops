@@ -1,0 +1,27 @@
+name: Private runtime
+on:
+  push:
+    branches: [feat/private-provider-foundation]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Source snapshot for reproducible verification
+        run: git archive --format=tar.gz -o "$RUNNER_TEMP/source.tar.gz" HEAD
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: private-runtime-source
+          path: ${{ runner.temp }}/source.tar.gz
+          retention-days: 3
+      - name: Worker unit tests
+        run: python3 -m unittest discover -s private-runtime -p 'test_*.py' -v
+      - name: Runtime tests
+        run: |
+          if test -d private-runtime/test; then node --test private-runtime/test/*.test.mjs; fi
