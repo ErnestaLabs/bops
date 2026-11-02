@@ -13,6 +13,9 @@ jobs:
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       NEXT_TELEMETRY_DISABLED: "1"
+      # The full Next production build exceeded Node's default 2 GiB heap.
+      # This is CI build capacity, not a local model/GPU requirement.
+      NODE_OPTIONS: "--max-old-space-size=4096"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
