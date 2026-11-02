@@ -35,8 +35,10 @@ const env = { ...process.env,
 const mode = process.argv[2] || 'start';
 if (!['start', 'dev', 'build'].includes(mode)) throw new Error('Use start, dev or build.');
 const policy = pathToFileURL(join(root, 'private-runtime/network-policy.mjs')).href;
-const args = ['--import', policy, join(root, 'node_modules/next/dist/bin/next'), mode];
-if (mode !== 'build') args.push('--hostname', '127.0.0.1', '--port', String(Number(process.env.PORT) || 3210));
+const args = mode === 'build'
+  ? ['--import', policy, join(root, 'node_modules/next/dist/bin/next'), 'build']
+  : ['--import', policy, join(root, 'private-runtime/server.mjs'), ...(mode === 'dev' ? ['--dev'] : [])];
+env.NODE_ENV = mode === 'dev' ? 'development' : 'production';
 console.log(`Private ${mode}: no Orgo/OpenAI services. Login at http://127.0.0.1:${Number(process.env.PORT) || 3210}/api/private-login`);
 console.log(`Owner login token file: ${join(dir, 'ui-token')} (never share it in chat)`);
 const child = spawn(process.execPath, args, { cwd: root, env, stdio: 'inherit' });
