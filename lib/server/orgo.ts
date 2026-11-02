@@ -33,3 +33,6 @@ export const callOrgo: typeof legacy.callOrgo = (...args) => {
   if (privateMode()) return Promise.resolve(null);
   return legacy.callOrgo(...args);
 };
+
+/** Teams remain local; never bind private workspaces to Orgo projects. */
+export const perWorkspaceProjects: typeof legacy.perWorkspaceProjects = (...args) => privateMode() ? Promise.resolve(false) : legacy.perWorkspaceProjects(...args);

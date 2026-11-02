@@ -6,6 +6,8 @@ import { resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { endpoint } from './inference.mjs';
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
+// Load operator configuration before resolving storage or creating any files.
+if (process.env.BOPS_PRIVATE_ENV_FILE) process.loadEnvFile(resolve(process.env.BOPS_PRIVATE_ENV_FILE));
 const dir = resolve(process.env.BOPS_PRIVATE_DATA_DIR || join(root, '.data/private-runtime'));
 mkdirSync(dir, { recursive: true, mode: 0o700 });
 const secret = (name, bytes) => {
@@ -14,7 +16,6 @@ const secret = (name, bytes) => {
   catch (e) { if (e.code !== 'ENOENT') throw e; const value = randomBytes(bytes).toString('hex'); writeFileSync(path, value, { flag: 'wx', mode: 0o600 }); return value; }
 };
 // Read operator configuration without ever printing credentials.
-if (process.env.BOPS_PRIVATE_ENV_FILE) process.loadEnvFile(resolve(process.env.BOPS_PRIVATE_ENV_FILE));
 endpoint(process.env.BOPS_INFERENCE_BASE_URL);
 if (!process.env.BOPS_INFERENCE_MODEL?.trim()) throw new Error('Set BOPS_INFERENCE_MODEL.');
 if (!process.env.BOPS_INFERENCE_API_KEY?.trim() && !['localhost','127.0.0.1','[::1]'].includes(new URL(process.env.BOPS_INFERENCE_BASE_URL).hostname)) throw new Error('Set BOPS_INFERENCE_API_KEY.');
@@ -29,6 +30,7 @@ const env = { ...process.env,
   // Empty strings also stop Next's dotenv loader from restoring legacy credentials.
   OPENAI_API_KEY: '', OPENAI_EXECUTOR_API_KEY: '', ORGO_API_KEY: '',
   BOPS_DATABASE_URL: '', BOPS_CLOUD_URL: '', BOPS_PUBLIC_HOST: '',
+  BOPS_RUNNER: '0', TAILSCALE_AUTH_KEY: '',
 };
 const mode = process.argv[2] || 'start';
 if (!['start', 'dev', 'build'].includes(mode)) throw new Error('Use start, dev or build.');

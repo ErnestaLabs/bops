@@ -9,7 +9,10 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      NEXT_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -17,6 +20,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
+          cache: npm
       - name: Runtime unit tests (no provider credentials)
         run: node --test private-runtime/test/*.test.mjs
       - name: Python and shell syntax
@@ -27,6 +31,16 @@ jobs:
         run: docker build -f private-runtime/worker/Dockerfile -t ernesta-bops-worker:private .
       - name: Real worker acceptance (no network, no AI keys)
         run: node private-runtime/docker-smoke.mjs
+      - name: Application dependencies
+        run: npm ci
+      - name: Production build and real Bops chat/task acceptance
+        run: node private-runtime/app-smoke.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: private-app-acceptance-logs
+          path: .scratch/app-acceptance
+          retention-days: 3
       - name: Source snapshot for reproducible verification
         if: always()
         run: git archive --format=tar.gz -o "$RUNNER_TEMP/source.tar.gz" HEAD

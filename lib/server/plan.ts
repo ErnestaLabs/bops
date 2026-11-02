@@ -22,3 +22,6 @@ export const orgoPlan: typeof legacy.orgoPlan = (...args) => privateMode() ? Pro
 export const noOwnComputer: typeof legacy.noOwnComputer = (...args) => privateMode() ? Promise.resolve(null) : legacy.noOwnComputer(...args);
 export const noMainComputer: typeof legacy.noMainComputer = (...args) => privateMode() ? Promise.resolve(null) : legacy.noMainComputer(...args);
 export const holdFreeAgain: typeof legacy.holdFreeAgain = (...args) => privateMode() ? Promise.resolve(null) : legacy.holdFreeAgain(...args);
+
+/** The account view must not resolve vendor billing URLs in private mode. */
+export const orgoPages: typeof legacy.orgoPages = () => privateMode() ? { plan: "/api/config", usage: "/api/config" } : legacy.orgoPages();
