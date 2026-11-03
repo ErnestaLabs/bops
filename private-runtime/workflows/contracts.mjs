@@ -11,9 +11,14 @@ export const TRANSITIONS = Object.freeze({
   RECONCILING: ['VERIFYING','FAILED','OUTCOME_UNKNOWN','CANCELLED'], CANCELLING: ['CANCELLED','OUTCOME_UNKNOWN'],
   SUCCEEDED: [], FAILED: [], CANCELLED: [],
 });
+/** An executor or model reporting its own success is never verification, and an
+ * empty verifier name is not one either. Shared so every gate agrees.
+ */
+const SELF_REPORT = /^(?:model|executor|agent|trigger|worker|llm)-self-report$/;
+export const isIndependentVerifier = v => typeof v === 'string' && v.trim().length > 0 && v.length <= 64 && !SELF_REPORT.test(v.trim());
 export function transition(from, to, evidence = {}) {
   if (!TRANSITIONS[from]?.includes(to)) throw new WorkflowError('invalid_transition');
-  if (to === 'SUCCEEDED' && !(evidence.verified === true && typeof evidence.receiptId === 'string' && evidence.receiptId.length > 0 && typeof evidence.verifier === 'string' && evidence.verifier !== 'model-self-report')) throw new WorkflowError('verification_required');
+  if (to === 'SUCCEEDED' && !(evidence.verified === true && isIndependentVerifier(evidence.verifier) && typeof evidence.receiptId === 'string' && evidence.receiptId.trim().length > 0)) throw new WorkflowError('verification_required');
   if (from === 'CANCELLING' && to === 'CANCELLED' && evidence.stopped !== true) throw new WorkflowError('stop_confirmation_required');
   return to;
 }

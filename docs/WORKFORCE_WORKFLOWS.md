@@ -12,7 +12,7 @@ explicitly marked SIMULATION and make no service requests.
 To create a portable, offline HTML copy:
 
 ```sh
-node private-runtime/workflows/export-map.mjs /absolute/path/workforce-map.html
+node private-runtime/workflows/export-control-map.mjs /absolute/path/workforce-map.html
 ```
 
 The single source of truth is the compact `private-runtime/workflows/catalog.json`.

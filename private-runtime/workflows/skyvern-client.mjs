@@ -1,5 +1,6 @@
 /** Explicit self-hosted Skyvern API adapter. No Cloud default, no POST retry. */
 import { WorkflowError, canonical, digest, verifyApproval } from './contracts.mjs';
+import { dispatchWriteOnce } from './dispatch.mjs';
 const BLOCKED = ['skyvern.com','orgo.ai','openai.com','x.ai'];
 export function selfHostedEndpoint(value) {
   let url; try { url = new URL(value); } catch { throw new WorkflowError('self_hosted_endpoint_required'); }
@@ -65,19 +66,5 @@ export function skyvernClient({ baseURL, apiKey, fetchImpl = fetch, timeoutMs = 
 export async function dispatchBrowserWorkflow({ client, ledger, allowedWorkflowIds, approvalKey, action, approval }) {
   const request = browserRequest(action, allowedWorkflowIds), requestHash = digest(request);
   verifyApproval(approval, { actionKey: action.actionKey, requestHash }, approvalKey);
-  const reservation = await ledger.reserve(action.actionKey, requestHash);
-  if (!reservation.created) {
-    if (reservation.requestHash !== requestHash) throw new WorkflowError('action_key_payload_conflict');
-    if (!reservation.remoteId) throw new WorkflowError('submission_outcome_unknown');
-    return client.get(reservation.remoteId);
-  }
-  try {
-    const result = await client.submit(request);
-    await ledger.submitted(action.actionKey, requestHash, result.remoteId);
-    return result;
-  } catch {
-    // If the write itself failed, the earlier intent still prevents replay.
-    await ledger.unknown(action.actionKey, requestHash).catch(() => {});
-    throw new WorkflowError('submission_outcome_unknown');
-  }
+  return dispatchWriteOnce({ client, ledger, actionKey: action.actionKey, requestHash, request });
 }

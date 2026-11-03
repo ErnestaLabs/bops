@@ -36,5 +36,17 @@ export function postgresLedger(pool) {
         await db.query("INSERT INTO ernesta_workflow_events(action_key,event_type) VALUES($1,'RECONCILIATION_REQUIRED')", [actionKey]);
       });
     },
+    /** Record an action that reconciliation proved already happened. Refuses to
+     * invent a success for an absent action, and closes one action only once. */
+    reconcile(actionKey, requestHash, remoteId) {
+      hash(actionKey); hash(requestHash);
+      if (typeof remoteId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(remoteId)) throw new WorkflowError('invalid_remote_id');
+      return transaction(async db => {
+        const r = await db.query("UPDATE ernesta_workflow_actions SET status='SUBMITTED',remote_id=$3,updated_at=now() WHERE action_key=$1 AND request_hash=$2 AND status='OUTCOME_UNKNOWN' AND remote_id IS NULL RETURNING action_key", [actionKey,requestHash,remoteId]);
+        if (r.rowCount !== 1) throw new WorkflowError('not_reconcilable');
+        await db.query("INSERT INTO ernesta_workflow_events(action_key,event_type) VALUES($1,'RECONCILED')", [actionKey]);
+        return { remoteId };
+      });
+    },
   };
 }
