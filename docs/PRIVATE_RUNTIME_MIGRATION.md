@@ -1,96 +1,154 @@
 # Ernesta customer-owned runtime
 
-This branch is an integration in progress, not a production release. The application, bots,
-routines, delegation and existing approval logic remain Bops code, under its original license.
-Upstream implementation files are preserved as `*-legacy.ts` for review and compatibility.
-They are not a claim that dependencies have been physically purged from the repository.
+This is the private server path in the existing Bops application, not a separate demo.
+Use the `private:*` commands below. The upstream Mac download, setup script and plain
+`npm start` are **not** the private launcher and retain upstream behavior.
 
-## Actual integration
+## Supported core path
 
-- `lib/server/openai-client.ts` selects the new transport in private mode. Existing chat and
-  computer-turn callers receive response-shaped objects, but the wire protocol is ordinary
-  hosted Chat Completions. The private transport imports no vendor SDK. History is local.
-- `lib/server/orgo.ts` dispatches computer lifecycle, shell, input and screenshots to Docker.
-  `plan.ts` provisions fresh customer-owned workers instead of querying Orgo plans or cloning
-  another bot's browser credentials. Named work and home volumes survive computer removal.
-- `models.ts` replaces upstream model defaults with the operator's selected hosted model.
-- Orgo credentials and sign-in are not used in private mode. Private API access requires the
-  deployment's owner-token cookie. The launcher binds only to loopback; use an SSH tunnel.
-- The Linux vault uses authenticated AES-256-GCM encryption, a customer-controlled key and
-  separate atomic files. Back up the key separately from encrypted vault files.
-- The launcher disables upstream telemetry and cloud credentials. A preloaded Node network
-  guard blocks Orgo/OpenAI/xAI destinations in fetch and HTTP(S) request paths. It is NOT an
-  OS firewall and does not govern arbitrary browsers or native processes.
+The owner signs in, chats with a bot, starts a task, and the bot runs commands on a
+customer-owned Docker computer. The existing screen endpoint returns that computer's
+screenshots. Chat, completed tasks, owner settings and response history are local.
+The inference transport uses an explicitly configured hosted Chat Completions endpoint.
+No local model, GPU, Orgo account or OpenAI account is required for this path.
 
-## Run on an owner-controlled Linux server
+The private launcher binds HTTP to `127.0.0.1`, authenticates requests before Next,
+disables upstream cloud credentials and telemetry, and preloads a Node destination
+guard. The guard is **not an OS firewall** and does not control browsers/native programs.
+Hosted inference necessarily receives prompts and selected tool observations. This is
+not an air-gapped system or a promise that no data leaves the customer server.
 
-Requirements: Node 22+, Docker, existing Bops npm dependencies, and a hosted model that supports
-function/tool calling. Visual tasks also require image input. No local model or GPU is required.
+## Install on the customer's Linux server
+
+Use Node 22.16 or newer, npm and a reachable Linux Docker daemon. Build memory and
+worker memory are separate from inference. Each worker defaults to 2 CPUs / 4 GiB.
+The CI build uses a 4 GiB Node heap; size the server for the build, workers and OS.
+Run one Bops server per data directory. Do not point two instances at the same files.
 
 ```sh
-npm ci
-node --test private-runtime/test/*.test.mjs
+git switch feat/private-provider-foundation
+ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
 docker build -f private-runtime/worker/Dockerfile -t ernesta-bops-worker:private .
-node private-runtime/docker-smoke.mjs
+cp private-runtime/private.env.example .env.private
+chmod 600 .env.private
 ```
 
-Set configuration in the server's secret manager or a private environment file (never Git):
+Edit `.env.private` **on the server**, never in chat or Git. Set:
 
 ```dotenv
-BOPS_INFERENCE_BASE_URL=https://your-chosen-provider.example/v1
-BOPS_INFERENCE_MODEL=the-provider-model-id
-BOPS_INFERENCE_API_KEY=your-private-key
-# Optional: a stable ID is generated locally if omitted.
-BOPS_PRIVATE_INSTALL_ID=your-installation-id
-# Owner authorisation for computer input; otherwise screenshot-only model actions.
+BOPS_INFERENCE_BASE_URL=https://your-provider.example/v1
+BOPS_INFERENCE_MODEL=your-non-OpenAI-non-xAI-model-id
+BOPS_INFERENCE_API_KEY=your-secret-key
+BOPS_PRIVATE_DATA_DIR=/absolute/persistent/customer/data
 BOPS_PRIVATE_COMPUTER_ACTIONS=1
+PORT=3210
 ```
 
-`https://integrate.api.nvidia.com/v1` and `https://openrouter.ai/api/v1` use the documented Chat
-Completions route. Support still depends on the exact model and account; neither was live-tested
-in this change. Select a non-OpenAI/non-xAI model. No automatic provider fallback occurs.
+Choose a model supporting function calls. Visual computer tasks additionally need image
+input. A text-only model passing the tool check does not prove visual task capability.
+The launcher loads the environment file before choosing paths. Environment variables
+already set by the operator take precedence; avoid mixing conflicting configuration.
 
 ```sh
-BOPS_PRIVATE_ENV_FILE=/secure/path/private.env node private-runtime/start.mjs build
-BOPS_PRIVATE_ENV_FILE=/secure/path/private.env node private-runtime/start.mjs start
-# Development, instead of build/start:
-BOPS_PRIVATE_ENV_FILE=/secure/path/private.env node private-runtime/start.mjs dev
+export BOPS_PRIVATE_ENV_FILE="$PWD/.env.private"
+npm run private:check
+# Explicit opt-in: two small synthetic provider requests, potentially billable.
+# No customer data, conversation storage or actual tool execution.
+npm run private:check -- --live
+npm run private:test
+NODE_OPTIONS=--max-old-space-size=4096 npm run private:build
+npm run private:start
 ```
 
-Open `http://127.0.0.1:3210/api/private-login`. The owner token is in
-`.data/private-runtime/ui-token` unless the data directory or token is supplied externally.
-Never expose the server directly without a separately reviewed authenticated TLS gateway.
+A successful local preflight is not a live-provider or internet-connectivity certificate.
+`--live` checks text plus a harmless forced function call. It never switches providers.
+Provider errors are reported without printing credentials or provider response bodies.
 
-Workers default to `--network none`. To allow real web work, the deployment owner must configure
-an egress-controlled Docker network and set `BOPS_WORKER_NETWORK` to its name. Do not use host
-networking. Docker isolation is not a substitute for a separate VM when running hostile code.
-The worker never receives the inference key, UI token, vault key, Docker socket or host mounts.
-Host compute, memory, storage and third-party inference may have costs; there is no Orgo fee.
+Open `http://127.0.0.1:3210/api/private-login` on that server. From a different computer,
+keep this SSH connection open and use the same URL in your browser:
 
-## Verification recorded for this change
+```sh
+ssh -N -L 3210:127.0.0.1:3210 your-user@your-customer-server
+```
 
-- 32 Node unit/contract tests passed in the editing sandbox: inference conversion, local history,
-  malformed/truncated output rejection, cancellation, no automatic fallback, worker ownership,
-  Docker argv isolation, computer-input configuration, destination policy and encrypted vault.
-- Node syntax checks, Python byte-compilation and shell syntax checks were run locally.
-- Real Xvfb and Chromium started locally, their CDP endpoint responded, and the exact screenshot
-  helper produced a valid 640x480 PNG at scale 0.5.
-- Page navigation in that sandbox was blocked by Chromium's managed site policy. The policy was
-  not changed or bypassed. This is not a successful browser task acceptance test.
-- Docker is not installed in the editing sandbox. The Docker build and real worker acceptance
-  script are supplied in CI but have NOT been claimed as passing.
-- A full Next build/typecheck, complete Bops user journey and live paid/free provider request
-  remain unverified. Source-level adapters are not proof of feature parity.
+The launcher reports the **path** to the owner token, normally
+`BOPS_PRIVATE_DATA_DIR/ui-token`; retrieve it locally and paste only into the login form.
+When `BOPS_UI_TOKEN` is supplied externally, use the operator's secret store instead.
+Never post tokens in chat, URLs, screenshots, Git or build logs. Do not bind the server
+to a public address or expose Docker's daemon socket over the network.
 
-## Explicit gaps, with no silent vendor fallback
+## Worker network: offline versus web work
 
-Live VNC/WebRTC, realtime voice, image generation, provider-native Agents APIs, old remote
-conversation resumption, context compaction, and memory/disk cloning are not implemented by
-this private transport. Unsupported calls fail explicitly. Screenshots and input use the new
-computer interface. Hosted web-search tools are not advertised; research must use a browser
-or report the lack of live sources. Existing optional integrations can still send data to their
-configured providers. Hosted inference receives prompts: this is not an air-gapped system.
+Workers default to `BOPS_WORKER_NETWORK=none`. Chat and local-file tasks work, but those
+workers **cannot browse websites**. For real web work, the customer administrator must
+supply an existing egress-controlled Docker network, put its name in the environment
+file, and restart Bops. Newly created computers use the selected network. Existing
+computers retain their original network configuration; changing the setting is not a
+migration of existing computers.
 
-The original SDK and legacy implementations remain in the dependency graph during migration;
-removing them from the entire source tree requires completing the remaining features and tests.
-Do not merge this draft as a completed, fully private, all-feature Bops replacement.
+```sh
+npm run private:check -- --require-web
+```
+
+This rejects `none`, host networking and an internal-only network. It checks network
+configuration, not DNS, external reachability or the quality of a firewall policy.
+Use an owner-approved public-page task as the final deployment test. No code here
+silently enables internet access, changes a firewall or shares the host network.
+
+The worker receives neither inference credentials nor UI/vault keys, host directories
+or the Docker socket. Work/home named volumes survive computer deletion. Docker is
+not VM-grade isolation for hostile code. A user with access to the host Docker daemon
+has powerful host-level privileges; isolate the deployment appropriately.
+
+## Updates, shutdown and backups
+
+Private builds use disposable storage and inert build-time persistence. Existing customer
+state is not read or migrated by the private build. Runtime still loads the configured
+persistent directory. Stop the server before replacing its `.next` build files.
+SIGTERM/SIGINT stop new connections and drain the existing exit-work/save path before
+closing Next. This is graceful-shutdown protection, not a guarantee against power loss.
+
+Back up the customer data directory and worker work/home volumes. Keep `install-id`
+stable to retain worker ownership. Back up the vault key separately and securely;
+losing it prevents decrypting existing vault entries. Do not rotate or delete these files
+as part of an update. Restore backups on a separate test instance before relying on them.
+
+## Evidence and release boundary
+
+The private CI workflow runs dependency-free contract/security tests, builds the real
+Docker image, exercises four displays/browser navigation/screenshot capture, builds the
+actual Next application, and runs real HTTP/chat/task acceptance. Its inference endpoint
+is a deterministic test server, **not a live hosted model**.
+
+The expanded acceptance also checks an existing state file remains byte-for-byte unchanged
+during build, verifies an actual worker-created file, saves immediately before shutdown,
+restarts, and checks owner/chat/task/file persistence. Chromium signs in through the form
+and sends through the real chat composer. Read the workflow's `result.json` artifact for
+which checks actually passed; supplying a test is not evidence that it passed.
+
+A deployment is not ready merely because CI passed. Its chosen provider/model, visual
+capability, web egress, host permissions and resource limits must be verified on that
+customer's server. No such customer production deployment or live hosted-provider result
+is claimed by the deterministic CI test.
+
+## Explicit unsupported features
+
+Live VNC/WebRTC, realtime voice, image generation, provider-native Agents APIs, legacy
+remote conversation resumption, context compaction, and memory/disk cloning are not
+implemented by this private transport. Unsupported calls fail explicitly. Text streaming
+is buffered event compatibility, not live provider-token streaming. Hosted-native web
+search is not advertised; research uses the assigned browser when its network permits.
+Existing optional integrations may send data to the services the customer configures.
+
+Legacy SDK dependencies and `*-legacy.ts` implementations remain for upstream compatibility.
+They are not evidence of mandatory use in private mode, nor a claim that the repository
+is physically purged of every vendor reference. Dependency-audit findings require separate
+triage before broad production rollout.
+
+## License
+
+Keep the repository's original LICENSE and copyright notices. Its FSL-1.1-ALv2 text
+explicitly includes internal use and professional services to a compliant licensee as
+permitted purposes; it excludes the defined Competing Use. Customer-owned hosting does
+not itself remove those terms. Do not present this fork as an unrestricted competing
+commercial product or imply that replacing providers changes the license.

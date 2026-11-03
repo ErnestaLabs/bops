@@ -14,7 +14,12 @@
     "app:build": "node -e \"require('fs').writeFileSync('desktop/repo.json', JSON.stringify({ path: process.cwd() }))\" && electron-builder --mac --dir -c.mac.identity=null",
     "app:install": "npm run app:build && rm -rf /Applications/Bops.app && ditto dist-desktop/mac-arm64/Bops.app /Applications/Bops.app",
     "fast": "next build && next start --port 3210",
-    "app:release": "scripts/release.sh"
+    "app:release": "scripts/release.sh",
+    "private:build": "node private-runtime/start.mjs build",
+    "private:start": "node private-runtime/start.mjs start",
+    "private:dev": "node private-runtime/start.mjs dev",
+    "private:test": "node --test private-runtime/test/*.test.mjs",
+    "private:check": "node private-runtime/doctor.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -147,10 +152,10 @@
         "NSMicrophoneUsageDescription": "Bops uses your microphone when you call one of your bots.",
         "NSAppleEventsUsageDescription": "With Full access on, your bots control your apps for you, like sending a message or adding a reminder.",
         "NSDesktopFolderUsageDescription": "With Full access on, your bots can use the files on your Desktop.",
-        "NSDocumentsFolderUsageDescription": "With Full access on, your bots can use the files in your Documents folder.",
-        "NSDownloadsFolderUsageDescription": "With Full access on, your bots can use and save files in your Downloads folder.",
-        "NSRemovableVolumesUsageDescription": "With Full access on, your bots can use files on your external drives.",
-        "NSNetworkVolumesUsageDescription": "With Full access on, your bots can use files on your network drives."
+        "NSDocumentsFolderUsageDescription": "With Full access on, your bots can use files in your Documents folder.",
+        "NSDownloadsFolderUsageDescription": "With Full access on, your bots can use files in your Downloads folder.",
+        "NSRemovableVolumesUsageDescription": "With Full access on, your bots can use files on external drives.",
+        "NSNetworkVolumesUsageDescription": "With Full access on, your bots can use files on network drives."
       }
     },
     "dmg": {
