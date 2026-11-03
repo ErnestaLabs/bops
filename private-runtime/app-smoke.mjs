@@ -16,6 +16,8 @@ const data = join(temp, 'configured-data');
 const install = `acceptance-${randomBytes(8).toString('hex')}`;
 const token = randomBytes(32).toString('hex');
 const marker = `PRIVATE_TASK_${randomBytes(8).toString('hex')}`;
+const delegationMarker = `PRIVATE_DELEGATION_${randomBytes(8).toString('hex')}`;
+let delegateBotId, handoffIssued = false;
 const browserMarker = `PRIVATE_BROWSER_${randomBytes(8).toString('hex')}`;
 const chatMarker = `PRIVATE_CHAT_${randomBytes(8).toString('hex')}`;
 const logdir = resolve(process.env.BOPS_ACCEPTANCE_LOG_DIR || join(root, '.scratch/app-acceptance'));
@@ -55,6 +57,10 @@ const provider = createServer(async (req, res) => {
         tool_calls = [{ id: `command_${taskToolCalls}`, type: 'function', function: { name: 'run_command', arguments: JSON.stringify({ command: `printf '${marker}' > /workspace/private-acceptance.txt && cat /workspace/private-acceptance.txt`, timeout_seconds: 10 }) } }];
         content = null;
       }
+    } else if (delegateBotId && !handoffIssued && names.includes('hand_off') && JSON.stringify(body.messages).includes(delegationMarker)) {
+      handoffIssued = true;
+      tool_calls = [{ id: 'delegation_call', type: 'function', function: { name: 'hand_off', arguments: JSON.stringify({ bot_id: delegateBotId, title: 'Delegation acceptance', goal: 'Write the private acceptance marker file on your own computer.', say: 'The specialist will create the acceptance file.', where: 'cloud', then_on_mac: null }) } }];
+      content = null;
     } else if (body.response_format?.json_schema) content = JSON.stringify(jsonSchemaValue(body.response_format.json_schema.schema));
     else if (body.response_format?.type === 'json_object') content = '{}';
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -156,6 +162,43 @@ try {
   const ids = execFileSync('docker', ['ps', '--filter', `label=ernesta.install=${install}`, '--format', '{{.Names}}'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
   assert.equal(ids.length, 1);
   assert.equal(execFileSync('docker', ['exec', ids[0], 'cat', '/workspace/private-acceptance.txt'], { encoding: 'utf8' }), marker);
+  // Exercise delegation through the real chat tool path, not a direct task POST.
+  execFileSync('docker', ['exec', ids[0], 'sh', '-c', 'printf main-only > /workspace/main-only.txt']);
+  const specialist = await call('/api/bots', { name: 'Acceptance specialist', role: 'File operations', ownComputer: true });
+  delegateBotId = specialist.botId;
+  assert.ok(delegateBotId); assert.equal(specialist.note, undefined);
+  await call(`/api/chats/${encodeURIComponent(chat.id)}/messages`, { text: `${delegationMarker}: Hand the file task to Acceptance specialist on its own computer.` });
+  const waitFor = async (check, label) => {
+    const deadline = Date.now() + 120000;
+    while (Date.now() < deadline) {
+      const state = (await call('/api/state')).state;
+      const value = check(state); if (value) return value;
+      await sleep(500);
+    }
+    throw new Error(`${label} timed out`);
+  };
+  const delegated = await waitFor(state => {
+    const session = state.sessions.find(x => x.title === 'Delegation acceptance' && x.botId === delegateBotId);
+    if (session?.status === 'failed') throw new Error(`Delegation failed: ${session.error}`);
+    return session?.status === 'done' ? session : null;
+  }, 'Delegation');
+  assert.equal(handoffIssued, true); assert.equal(delegated.sentVia, bot.id); assert.equal(delegated.answer, marker);
+  const teamState = (await call('/api/state')).state;
+  const specialistComputer = teamState.bots.find(x => x.id === delegateBotId).computerId;
+  assert.ok(specialistComputer); assert.notEqual(specialistComputer, ids[0]);
+  assert.equal(execFileSync('docker', ['exec', specialistComputer, 'cat', '/workspace/private-acceptance.txt'], { encoding: 'utf8' }), marker);
+  execFileSync('docker', ['exec', specialistComputer, 'test', '!', '-e', '/workspace/main-only.txt']);
+  // The real timer must start this once-only routine, without a manual run request.
+  const scheduled = await call('/api/routines', { botId: delegateBotId, title: 'Routine acceptance', goal: 'Write the private acceptance marker file.', run: 'task', where: 'cloud', schedule: { kind: 'once', at: Date.now() + 3000 } });
+  const routineId = scheduled.routine.id;
+  const ran = await waitFor(state => {
+    const r = state.routines.find(x => x.id === routineId);
+    if (r?.last?.status === 'failed') throw new Error(`Scheduled routine failed: ${r.last.error}`);
+    return r?.last?.status === 'ok' ? r : null;
+  }, 'Scheduled routine');
+  assert.equal(ran.enabled, false, 'Once-only routine must not repeat');
+  assert.ok((await call('/api/state')).state.sessions.some(x => x.routineId === routineId && x.status === 'done' && x.answer === marker));
+  assert.equal(taskToolCalls, 3, 'Exactly the initial, delegated and scheduled tasks must execute');
   const ownerName = `Restart ${randomBytes(6).toString('hex')}`;
   await call('/api/owner', { name: ownerName, about: 'Written immediately before shutdown' });
   await stop(serverProcess);
@@ -172,6 +215,9 @@ try {
   assert.ok(restored.messages.some(m => m.role === 'bot' && m.text.includes(chatMarker)));
   assert.equal(restored.sessions.find(s => s.id === task.id)?.answer, marker);
   assert.equal(execFileSync('docker', ['exec', ids[0], 'cat', '/workspace/private-acceptance.txt'], { encoding: 'utf8' }), marker);
+  assert.equal(restored.bots.find(x => x.id === delegateBotId)?.computerId, specialistComputer);
+  assert.equal(restored.sessions.find(x => x.id === delegated.id)?.answer, marker);
+  assert.equal(restored.routines.find(x => x.id === routineId)?.last?.status, 'ok');
   let browserUI = false;
   if (process.env.BOPS_BROWSER_ACCEPTANCE === '1') {
     const { chromium } = await import('playwright');
@@ -197,7 +243,7 @@ try {
     await browser.close(); browser = undefined; browserUI = true;
   }
   await stop(serverProcess);
-  const evidence = { passed: true, productionBuild: true, existingStatePreservedDuringBuild: true, privateLogin: true, chat: true, task: true, realDockerOutput: true, realDockerFile: true, existingScreenRoute: true, cleanShutdown: true, restartPersistence: true, telemetryDisabled: true, browserReplyAndDesktop: browserUI, browserUI, providerRequests: received, providerType: 'local deterministic test server, not a live hosted model' };
+  const evidence = { passed: true, productionBuild: true, existingStatePreservedDuringBuild: true, privateLogin: true, chat: true, task: true, realDockerOutput: true, realDockerFile: true, existingScreenRoute: true, cleanShutdown: true, restartPersistence: true, specialistDelegation: true, separateWorkerVolumes: true, scheduledRoutine: true, teamRestartPersistence: true, telemetryDisabled: true, browserReplyAndDesktop: browserUI, browserUI, providerRequests: received, providerType: 'local deterministic test server, not a live hosted model' };
   writeFileSync(join(logdir, 'result.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));
 } finally {

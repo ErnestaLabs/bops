@@ -14,8 +14,6 @@ jobs:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       NEXT_TELEMETRY_DISABLED: "1"
       BOPS_ACCEPTANCE_TRACE: "1"
-      # The full Next production build exceeded Node's default 2 GiB heap.
-      # This is CI build capacity, not a local model/GPU requirement.
       NODE_OPTIONS: "--max-old-space-size=4096"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -38,13 +36,20 @@ jobs:
         run: node private-runtime/docker-smoke.mjs
       - name: Application dependencies
         run: npm ci
-      - name: Record runtime dependency audit
+      - name: Runtime dependency audit gate
         run: |
           mkdir -p .scratch/app-acceptance
           npm audit --omit=dev --json > .scratch/app-acceptance/dependency-audit.json || test "$?" -eq 1
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const audit = JSON.parse(fs.readFileSync('.scratch/app-acceptance/dependency-audit.json', 'utf8'));
+          const v = audit.metadata.vulnerabilities;
+          console.log(JSON.stringify({ runtimeAudit: v }));
+          if (v.high || v.critical) throw new Error('High/critical runtime dependency advisories block release');
+          NODE
       - name: Browser acceptance dependency
         run: npx --no-install playwright install --with-deps chromium
-      - name: Production build and real Bops chat/task acceptance
+      - name: Production build and real Bops team acceptance
         run: node private-runtime/app-smoke.mjs
         env:
           BOPS_BROWSER_ACCEPTANCE: "1"
