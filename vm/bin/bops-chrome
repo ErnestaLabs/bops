@@ -3,6 +3,10 @@
 # Usage: bops-chrome <display-number> [url]     e.g. bops-chrome 100 https://mail.google.com
 # Display 99 is the boot screen; 100-102 are extra screens. DevTools port = 9200 + display.
 set -euo pipefail
+# Keep the customer-owned Chromium launcher when Bops refreshes screen tools.
+if [[ -x /opt/private/bops-chrome ]]; then
+  exec /opt/private/bops-chrome "$@"
+fi
 N="${1:?display number, e.g. 100}"; URL="${2:-}"  # no URL: the bot's home screen (its new tab page)
 PROFILE="/root/profiles/s$N"
 mkdir -p "$PROFILE"

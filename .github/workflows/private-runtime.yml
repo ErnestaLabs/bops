@@ -1,0 +1,79 @@
+name: Private runtime
+on:
+  push:
+    branches: [feat/private-provider-foundation]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      NEXT_TELEMETRY_DISABLED: "1"
+      BOPS_ACCEPTANCE_TRACE: "1"
+      NODE_OPTIONS: "--max-old-space-size=4096"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+      - name: Runtime unit tests (no provider credentials)
+        run: node --test private-runtime/test/*.test.mjs
+      - name: Python and shell syntax
+        run: |
+          python3 -m py_compile private-runtime/worker/display.py
+          bash -n private-runtime/worker/bops-chrome
+          bash -n vm/bin/bops-chrome
+      - name: Build customer-owned worker
+        run: docker build -f private-runtime/worker/Dockerfile -t ernesta-bops-worker:private .
+      - name: Real worker acceptance (no network, no AI keys)
+        run: node private-runtime/docker-smoke.mjs
+      - name: Real public web access through isolated self-hosted proxy
+        run: node private-runtime/egress-smoke.mjs
+      - name: Application dependencies
+        run: npm ci
+      - name: Runtime dependency audit gate
+        run: |
+          mkdir -p .scratch/app-acceptance
+          npm audit --omit=dev --json > .scratch/app-acceptance/dependency-audit.json || test "$?" -eq 1
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const audit = JSON.parse(fs.readFileSync('.scratch/app-acceptance/dependency-audit.json', 'utf8'));
+          const v = audit.metadata.vulnerabilities;
+          console.log(JSON.stringify({ runtimeAudit: v }));
+          if (v.high || v.critical) throw new Error('High/critical runtime dependency advisories block release');
+          NODE
+      - name: Browser acceptance dependency
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Production build and real Bops team acceptance
+        run: node private-runtime/app-smoke.mjs
+        env:
+          BOPS_BROWSER_ACCEPTANCE: "1"
+      - name: Authenticated workflow map in real Chromium
+        run: node private-runtime/workflows/map-smoke.mjs
+      - name: Unattended routines after restart (no browser or state polling)
+        run: node private-runtime/headless-smoke.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: private-app-acceptance-logs
+          path: |
+            .scratch/app-acceptance
+            .next/server
+          include-hidden-files: true
+          retention-days: 3
+      - name: Source snapshot for reproducible verification
+        if: always()
+        run: git archive --format=tar.gz -o "$RUNNER_TEMP/source.tar.gz" HEAD
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: private-runtime-source
+          path: ${{ runner.temp }}/source.tar.gz
+          retention-days: 3

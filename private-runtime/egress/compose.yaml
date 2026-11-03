@@ -1,0 +1,35 @@
+# Run explicitly by the customer operator. No published ports, sockets or secrets.
+# One distinct project/network per customer deployment. Requires a Docker version
+# supporting bridge gateway_mode_ipv4=isolated; fail rather than downgrade.
+services:
+  egress:
+    build:
+      context: ../..
+      dockerfile: private-runtime/egress/Dockerfile
+    environment:
+      BOPS_EGRESS_ALLOW_HOSTS: ${BOPS_EGRESS_ALLOW_HOSTS:?Set exact allowed public hostnames}
+    labels:
+      ernesta.egress: "true"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.5
+    networks:
+      workers:
+        aliases: [bops-egress]
+      outbound: {}
+networks:
+  workers:
+    name: ${BOPS_EGRESS_NETWORK:?Set a dedicated worker network name}
+    internal: true
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+    labels:
+      ernesta.egress: "true"
+  outbound:
+    driver: bridge

@@ -5,16 +5,26 @@
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "scripts": {
-    "setup": "scripts/setup.sh",
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "setup": "node private-runtime/setup.mjs",
+    "dev": "node private-runtime/start.mjs dev",
+    "build": "node private-runtime/start.mjs build",
+    "start": "node private-runtime/start.mjs start",
     "lint": "eslint",
     "app": "electron .",
     "app:build": "node -e \"require('fs').writeFileSync('desktop/repo.json', JSON.stringify({ path: process.cwd() }))\" && electron-builder --mac --dir -c.mac.identity=null",
     "app:install": "npm run app:build && rm -rf /Applications/Bops.app && ditto dist-desktop/mac-arm64/Bops.app /Applications/Bops.app",
-    "fast": "next build && next start --port 3210",
-    "app:release": "scripts/release.sh"
+    "fast": "npm run build && npm start",
+    "app:release": "scripts/release.sh",
+    "private:build": "node private-runtime/start.mjs build",
+    "private:start": "node private-runtime/start.mjs start",
+    "private:dev": "node private-runtime/start.mjs dev",
+    "private:test": "node --test private-runtime/test/*.test.mjs",
+    "private:check": "node private-runtime/doctor.mjs",
+    "upstream:setup": "scripts/setup.sh",
+    "upstream:dev": "next dev",
+    "upstream:build": "next build",
+    "upstream:start": "next start",
+    "upstream:fast": "next build && next start --port 3210"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -31,7 +41,7 @@
     "cn": "^0.4.0",
     "linkedom": "^0.18.13",
     "lucide-react": "^1.50.0",
-    "next": "16.3.8",
+    "next": "16.4.4",
     "openai": "^7.27.0",
     "pg": "^8.23.1",
     "posthog-js": "1.231.0",
@@ -39,7 +49,6 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "^0.0.1",
-    "shadcn": "^4.21.1",
     "sucrase": "^3.35.1",
     "tw-animate-css": "^1.4.0",
     "ws": "^8.22.0"
@@ -54,9 +63,10 @@
     "electron": "^44.5.1",
     "electron-builder": "^26.15.3",
     "eslint": "^9",
-    "eslint-config-next": "16.3.8",
+    "eslint-config-next": "16.4.4",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "shadcn": "^4.21.1"
   },
   "main": "desktop/main.cjs",
   "productName": "Bops",
@@ -147,14 +157,19 @@
         "NSMicrophoneUsageDescription": "Bops uses your microphone when you call one of your bots.",
         "NSAppleEventsUsageDescription": "With Full access on, your bots control your apps for you, like sending a message or adding a reminder.",
         "NSDesktopFolderUsageDescription": "With Full access on, your bots can use the files on your Desktop.",
-        "NSDocumentsFolderUsageDescription": "With Full access on, your bots can use the files in your Documents folder.",
-        "NSDownloadsFolderUsageDescription": "With Full access on, your bots can use and save files in your Downloads folder.",
-        "NSRemovableVolumesUsageDescription": "With Full access on, your bots can use files on your external drives.",
-        "NSNetworkVolumesUsageDescription": "With Full access on, your bots can use files on your network drives."
+        "NSDocumentsFolderUsageDescription": "With Full access on, your bots can use files in your Documents folder.",
+        "NSDownloadsFolderUsageDescription": "With Full access on, your bots can use files in your Downloads folder.",
+        "NSRemovableVolumesUsageDescription": "With Full access on, your bots can use files on external drives.",
+        "NSNetworkVolumesUsageDescription": "With Full access on, your bots can use files on network drives."
       }
     },
     "dmg": {
       "sign": false
+    }
+  },
+  "overrides": {
+    "@honcho-ai/sdk": {
+      "zod": "4.6.6"
     }
   }
 }

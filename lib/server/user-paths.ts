@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 /**
  * Where each Orgo user's things on this Mac go. Bops keeps the state itself in Bops Cloud
@@ -16,7 +16,8 @@ import { join } from "node:path";
 // such calls carry /*turbopackIgnore: true*/, and the release refuses a build that ships anything
 // but the server (scripts/release.sh).
 const cwd = process.cwd.bind(process);
-export const dataRoot = () => join(cwd(), ".data");
+const privateRoot = () => process.env.BOPS_PRIVATE_RUNTIME === "1" ? resolve(process.env.BOPS_PRIVATE_DATA_DIR || join(cwd(), ".data/private-runtime")) : null;
+export const dataRoot = () => { const root = privateRoot(); return root ? join(root, "app") : join(cwd(), ".data"); };
 /** The one state file every build before this one kept, whoever was signed in. */
 export const legacyStateFile = () => join(dataRoot(), "state.json");
 
@@ -24,7 +25,7 @@ export const legacyStateFile = () => join(dataRoot(), "state.json");
 export const scopeOf = (userId: string) => userId.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 80) || "_";
 
 export const userDataDir = (userId: string | null) => (userId ? join(dataRoot(), "users", scopeOf(userId)) : dataRoot());
-export const bopsHome = () => join(homedir(), ".bops");
+export const bopsHome = () => { const root = privateRoot(); return root ? join(root, "home") : join(homedir(), ".bops"); };
 export const userBopsHome = (userId: string | null) => (userId ? join(bopsHome(), "users", scopeOf(userId)) : bopsHome());
 /** Each bot's Chrome profiles (one per screen) live under here. */
 export const chromeRoot = () => join(bopsHome(), "chrome");

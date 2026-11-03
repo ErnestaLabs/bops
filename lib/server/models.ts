@@ -1,11 +1,11 @@
 import "server-only";
-
-/**
- * A model setting from the environment: the first of `names` that's set to something, else
- * `fallback`. An empty one counts as not set: .env.example ships these keys blank, and a blank
- * `BOPS_CHAT_MODEL=` would otherwise send model "" to OpenAI.
- */
+/** Private model selection never inherits an upstream GPT default. */
 export function setting(fallback: string, ...names: string[]): string {
+  const privateMode = process.env.BOPS_PRIVATE_RUNTIME === "1";
+  if (privateMode && names.some(n => n.endsWith("_MODEL"))) {
+    return process.env.BOPS_INFERENCE_MODEL?.trim() || "private-provider-not-configured";
+  }
+  if (privateMode && names.includes("BOPS_SPEED")) return "standard";
   for (const name of names) {
     const value = process.env[name]?.trim();
     if (value) return value;

@@ -1,0 +1,7 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "lib": ["ES2022", "DOM"], "module": "ESNext", "moduleResolution": "Bundler",
+    "strict": true, "noEmit": true, "allowJs": true, "checkJs": false, "skipLibCheck": true, "esModuleInterop": true
+  },
+  "include": ["trigger.config.ts", "src/**/*.ts", "../../private-runtime/workflows/*.mjs"]
+}

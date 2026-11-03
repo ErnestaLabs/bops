@@ -1,0 +1,28 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
+import {mkdirSync} from 'node:fs';
+import {chromium} from 'playwright';
+import {handleWorkflowMap} from '../../../private-runtime/workflows/http.mjs';
+import {authorizeRequest,rejectRequest} from '../../../private-runtime/http-auth.mjs';
+test('actual authenticated map HTTP handler, CSP, failure simulation and responsive view',async t=>{
+  const token='a'.repeat(64),env={BOPS_PRIVATE_RUNTIME:'1',BOPS_PRIVATE_AUTH:'loopback',BOPS_UI_TOKEN:token};
+  const server=createServer((req,res)=>{const d=authorizeRequest(req,env);if(d)return rejectRequest(res,d);if(!handleWorkflowMap(req,res)){res.writeHead(404);res.end();}});
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();server.close();});
+  const base=`http://127.0.0.1:${server.address().port}`;
+  assert.equal((await fetch(base+'/api/private-workflows/catalog')).status,401);
+  const browser=await chromium.launch({headless:true});t.after(()=>browser.close());
+  const context=await browser.newContext({viewport:{width:1440,height:1050}});
+  await context.addCookies([{name:'bops_window',value:token,url:base,httpOnly:true,sameSite:'Strict'}]);
+  const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.goto(base+'/workflow-map',{waitUntil:'networkidle'});
+  assert.equal(await page.locator('.workflow-button').count(),24);
+  await page.getByRole('button',{name:'Send an approved message',exact:false}).click();
+  await page.locator('#scenario').selectOption('timeout');await page.locator('#simulate').click();
+  const text=await page.locator('#trace').innerText();assert.match(text,/OUTCOME_UNKNOWN/);assert.match(text,/RECONCILING/);assert.doesNotMatch(text,/SUCCEEDED/);
+  await page.locator('#trace').evaluate(e=>e.scrollTop=e.scrollHeight);
+  mkdirSync('.scratch',{recursive:true});await page.screenshot({path:'.scratch/workflow-map.png',fullPage:true});
+  await page.locator('#search').fill('invoice');assert.equal(await page.locator('.workflow-button').count(),1);
+  await page.setViewportSize({width:390,height:844});await page.locator('#search').fill('');
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));assert.deepEqual(errors,[]);
+});
