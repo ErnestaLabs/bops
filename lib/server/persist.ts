@@ -123,9 +123,9 @@ export const MAC_LOOPS = [
 ] as const;
 export type Loop = (typeof RUNNER_LOOPS)[number] | (typeof MAC_LOOPS)[number];
 /** Whether `loop` runs on this server: everywhere but a runner, where only RUNNER_LOOPS do. */
-export const loopHere = (loop: Loop) => !onRunner() || (RUNNER_LOOPS as readonly string[]).includes(loop);
+export const loopHere = (loop: Loop) => process.env.BOPS_PRIVATE_BUILD !== "1" && (!onRunner() || (RUNNER_LOOPS as readonly string[]).includes(loop));
 
-const gx = globalThis as unknown as { __bopsExitWork?: Map<string, () => Promise<unknown>>; __bopsExitHooked?: boolean; __bopsStopping?: boolean };
+const gx = globalThis as unknown as { __bopsExitWork?: Map<string, () => Promise<unknown>>; __bopsExitHooked?: boolean; __bopsStopping?: boolean; __bopsDrain?: () => Promise<void> };
 const exitWork = (gx.__bopsExitWork ??= new Map());
 
 /**
@@ -142,19 +142,23 @@ const lastWork = () => Promise.race([Promise.allSettled([...exitWork.values()].m
 export function hookExit(first: () => void = () => {}, last: () => Promise<unknown> = async () => {}) {
   if (gx.__bopsExitHooked) return;
   gx.__bopsExitHooked = true;
+  let draining: Promise<void> | undefined;
+  gx.__bopsDrain = () => (draining ??= (async () => {
+    gx.__bopsStopping = true;
+    try { first(); } catch {}
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        lastWork().then(last),
+        new Promise<void>((done) => { timer = setTimeout(done, 8000); }),
+      ]);
+    } finally { if (timer) clearTimeout(timer); }
+  })());
+  // The private HTTP server owns signals and awaits this drain before closing Next.
+  // Two independently exiting handlers could otherwise cut the last save short.
+  if (process.env.BOPS_PRIVATE_RUNTIME === "1") return;
   for (const sig of ["SIGINT", "SIGTERM"] as const)
-    // Kept on, so a second signal while the exit work runs (the app quitting, then a new Bops
-    // stopping what it finds) doesn't fall to Node's default and cut the last save short.
-    process.on(sig, () => {
-      if (gx.__bopsStopping) return;
-      // Health answers 503 from here on (app/api/health): this server is going.
-      gx.__bopsStopping = true;
-      try {
-        first();
-      } catch {}
-      // Exits within 8 seconds whatever the work does: repeat signals are ignored meanwhile.
-      void Promise.race([lastWork().then(last), new Promise((r) => setTimeout(r, 8000))]).finally(() => process.exit(0));
-    });
+    process.on(sig, () => { void gx.__bopsDrain!().finally(() => process.exit(0)); });
 }
 
 /**
@@ -165,6 +169,14 @@ export function hookExit(first: () => void = () => {}, last: () => Promise<unkno
  * who signs in, so one account's state never shows for another; .data/state.json while nobody is.
  */
 export function fileStore({ get, replace }: StateAccess): Persistence {
+  // Build-time imports must not migrate, read or persist customer state.
+  if (process.env.BOPS_PRIVATE_BUILD === "1") return {
+    initial: () => null, changed: () => {}, backup: async () => {},
+    hydrate: async () => {}, signIn: async () => {}, signOut: async () => {},
+    ready: () => false, user: () => null, flush: async () => true,
+    unsent: () => false, pull: async () => {}, pulledAt: () => 0,
+    device: () => null, tooNew: () => false,
+  };
   const g2 = globalThis as unknown as {
     __bopsSave?: { timer?: ReturnType<typeof setTimeout>; writing?: Promise<void>; again?: boolean; hooked?: boolean; user?: string };
   };
@@ -182,7 +194,7 @@ export function fileStore({ get, replace }: StateAccess): Persistence {
       }
       const file = fileOf(save.user);
       mkdirSync(dirname(file), { recursive: true });
-      const tmp = `${file}.tmp`;
+      const tmp = `${file}.${process.pid}.tmp`;
       save.writing = writeFile(tmp, JSON.stringify(get()))
         .then(() => rename(tmp, file))
         .catch((e: Error) => console.warn(`[store] save: ${e.message}`))
@@ -202,7 +214,7 @@ export function fileStore({ get, replace }: StateAccess): Persistence {
     try {
       const file = fileOf(save.user);
       mkdirSync(dirname(file), { recursive: true });
-      const tmp = `${file}.now.tmp`;
+      const tmp = `${file}.${process.pid}.now.tmp`;
       writeFileSync(tmp, JSON.stringify(get()));
       renameSync(tmp, file);
     } catch (e) {

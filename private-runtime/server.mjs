@@ -32,7 +32,10 @@ let closing = false;
 async function close() {
   if (closing) return; closing = true;
   server.closeAllConnections(); server.close();
-  try { await app.close(); } finally { process.exit(0); }
+  try {
+    await globalThis.__bopsDrain?.();
+    await app.close();
+  } finally { process.exit(0); }
 }
 process.on('SIGINT', () => void close());
 process.on('SIGTERM', () => void close());

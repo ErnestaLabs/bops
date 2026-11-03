@@ -38,8 +38,12 @@ jobs:
         run: node private-runtime/docker-smoke.mjs
       - name: Application dependencies
         run: npm ci
+      - name: Browser acceptance dependency
+        run: npx --no-install playwright install --with-deps chromium
       - name: Production build and real Bops chat/task acceptance
         run: node private-runtime/app-smoke.mjs
+        env:
+          BOPS_BROWSER_ACCEPTANCE: "1"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

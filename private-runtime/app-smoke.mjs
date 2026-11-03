@@ -19,7 +19,7 @@ const marker = `PRIVATE_TASK_${randomBytes(8).toString('hex')}`;
 const chatMarker = `PRIVATE_CHAT_${randomBytes(8).toString('hex')}`;
 const logdir = resolve(process.env.BOPS_ACCEPTANCE_LOG_DIR || join(root, '.scratch/app-acceptance'));
 mkdirSync(logdir, { recursive: true });
-let serverProcess, log = '', received = 0, taskToolCalls = 0, verifiedOutput = false;
+let browser, serverProcess, log = '', received = 0, taskToolCalls = 0, verifiedOutput = false;
 const children = new Set();
 const listen = s => new Promise((ok, bad) => { s.once('error', bad); s.listen(0, '127.0.0.1', ok); });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -51,7 +51,7 @@ const provider = createServer(async (req, res) => {
         assert.match(output.content, /exit code 0/); verifiedOutput = true; content = marker;
       } else {
         assert.ok(++taskToolCalls <= 3, 'Unexpected repeated task execution');
-        tool_calls = [{ id: `command_${taskToolCalls}`, type: 'function', function: { name: 'run_command', arguments: JSON.stringify({ command: `printf '${marker}'`, timeout_seconds: 10 }) } }];
+        tool_calls = [{ id: `command_${taskToolCalls}`, type: 'function', function: { name: 'run_command', arguments: JSON.stringify({ command: `printf '${marker}' > /workspace/private-acceptance.txt && cat /workspace/private-acceptance.txt`, timeout_seconds: 10 }) } }];
         content = null;
       }
     } else if (body.response_format?.json_schema) content = JSON.stringify(jsonSchemaValue(body.response_format.json_schema.schema));
@@ -77,7 +77,7 @@ function waitExit(child, timeout) {
 async function stop(child) {
   if (!child || child.exitCode !== null) return;
   try { process.kill(-child.pid, 'SIGTERM'); } catch {}
-  for (let i = 0; i < 50 && child.exitCode === null; i++) await sleep(100);
+  for (let i = 0; i < 120 && child.exitCode === null; i++) await sleep(100);
   if (child.exitCode === null) { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }
 }
 try {
@@ -92,7 +92,14 @@ try {
   const env = { ...process.env, BOPS_PRIVATE_ENV_FILE: envfile, PORT: String(port), ELECTRON_SKIP_BINARY_DOWNLOAD: '1', NEXT_TELEMETRY_DISABLED: '1' };
   for (const k of ['BOPS_PRIVATE_DATA_DIR','BOPS_INFERENCE_BASE_URL','BOPS_INFERENCE_MODEL','BOPS_UI_TOKEN']) delete env[k];
   for (const k of ['ORGO_API_KEY','OPENAI_API_KEY','OPENAI_EXECUTOR_API_KEY','TYPESAFE_API_KEY','HONCHO_API_KEY','COMPOSIO_API_KEY','TREG_TOKEN','AGENTMAIL_API_KEY','AGENTPHONE_API_KEY','TAILSCALE_AUTH_KEY']) env[k] = '';
+  // A real existing state file is a build-isolation canary, not new empty storage.
+  mkdirSync(join(data, 'app'), { recursive: true });
+  const stateFile = join(data, 'app', 'state.json');
+  const existing = JSON.stringify({ owner: { name: 'Existing owner', about: 'Preserve during build' }, marker: 'build-must-not-touch' });
+  writeFileSync(stateFile, existing, { mode: 0o600 });
   if (!process.argv.includes('--built')) await waitExit(launch('build', env), 600000);
+  assert.equal(readFileSync(stateFile, 'utf8'), existing, 'Production build must leave existing customer state byte-for-byte unchanged');
+  assert.equal(received, 0, 'Building must not contact inference');
   serverProcess = launch('start', env);
   const until = Date.now() + 120000;
   for (;;) {
@@ -104,7 +111,7 @@ try {
   assert.ok(existsSync(join(data, 'vault-key')), 'Environment-file data directory must be honored');
   assert.equal((await fetch(`${base}/api/state`)).status, 401, 'Unauthenticated API access must fail');
   const login = await fetch(`${base}/api/private-login`, { method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: base }, body: new URLSearchParams({ token }) });
-  assert.equal(login.status, 303);
+  assert.equal(login.status, 303, `Private login: ${await login.text()}`);
   const cookie = login.headers.get('set-cookie'); assert.match(cookie, /HttpOnly/); assert.match(cookie, /SameSite=Strict/);
   const auth = { Cookie: cookie.split(';')[0] };
   const call = async (path, body) => {
@@ -114,6 +121,7 @@ try {
   assert.equal((await call('/api/auth/status')).needsSignIn, false);
   const first = (await call('/api/state')).state;
   assert.equal(first.bots.filter(b => b.isMain).length, 1);
+  assert.equal(first.owner.name, 'Existing owner', 'Runtime must load the real data directory, not the build directory');
   const bot = first.bots.find(b => b.isMain);
   const chat = first.chats.find(c => c.kind === 'bot' && c.botIds.includes(bot.id));
   await call('/api/account'); await call('/api/config');
@@ -141,10 +149,53 @@ try {
   assert.equal(image.status, 200, 'Existing screenshot route must use the Docker provider');
   assert.match(image.headers.get('content-type'), /image\//);
   assert.ok((await image.arrayBuffer()).byteLength > 100);
+  // Check the actual generated file, not just the provider's assertion of success.
+  const ids = execFileSync('docker', ['ps', '--filter', `label=ernesta.install=${install}`, '--format', '{{.Names}}'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+  assert.equal(ids.length, 1);
+  assert.equal(execFileSync('docker', ['exec', ids[0], 'cat', '/workspace/private-acceptance.txt'], { encoding: 'utf8' }), marker);
+  const ownerName = `Restart ${randomBytes(6).toString('hex')}`;
+  await call('/api/owner', { name: ownerName, about: 'Written immediately before shutdown' });
   await stop(serverProcess);
-  assert.ok(existsSync(join(data, 'app', 'state.json')), 'Application state stays inside the configured customer directory');
-  console.log(JSON.stringify({ passed: true, productionBuild: true, privateLogin: true, chat: true, task: true, realDockerOutput: true, existingScreenRoute: true, providerRequests: received }));
+  assert.equal(serverProcess.exitCode, 0, 'Shutdown must flush and exit cleanly without SIGKILL');
+  assert.equal(JSON.parse(readFileSync(stateFile, 'utf8')).owner.name, ownerName);
+  serverProcess = launch('start', env);
+  for (let i = 0; ; i++) {
+    try { if ((await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(2000) })).ok) break; } catch {}
+    if (i > 60) throw new Error('Restart timed out');
+    await sleep(500);
+  }
+  const restored = (await call('/api/state')).state;
+  assert.equal(restored.owner.name, ownerName);
+  assert.ok(restored.messages.some(m => m.role === 'bot' && m.text.includes(chatMarker)));
+  assert.equal(restored.sessions.find(s => s.id === task.id)?.answer, marker);
+  assert.equal(execFileSync('docker', ['exec', ids[0], 'cat', '/workspace/private-acceptance.txt'], { encoding: 'utf8' }), marker);
+  let browserUI = false;
+  if (process.env.BOPS_BROWSER_ACCEPTANCE === '1') {
+    const { chromium } = await import('playwright');
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    const errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto(base, { waitUntil: 'domcontentloaded' });
+    await page.getByLabel('Owner token').fill(token);
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    const composer = page.getByPlaceholder(/^Text /).first();
+    await composer.waitFor({ state: 'visible', timeout: 45000 });
+    await composer.fill('Browser acceptance: reply with the acceptance marker.');
+    const posted = page.waitForResponse(r => r.url().includes('/messages') && r.request().method() === 'POST');
+    await page.getByRole('button', { name: 'Send', exact: true }).first().click();
+    assert.equal((await posted).status(), 200);
+    await page.getByText(chatMarker, { exact: true }).first().waitFor({ timeout: 30000 });
+    await page.screenshot({ path: join(logdir, 'private-app-browser.png'), fullPage: true });
+    assert.deepEqual(errors, [], 'The real browser must not have uncaught JavaScript errors');
+    await browser.close(); browser = undefined; browserUI = true;
+  }
+  await stop(serverProcess);
+  const evidence = { passed: true, productionBuild: true, existingStatePreservedDuringBuild: true, privateLogin: true, chat: true, task: true, realDockerOutput: true, realDockerFile: true, existingScreenRoute: true, cleanShutdown: true, restartPersistence: true, browserUI, providerRequests: received, providerType: 'local deterministic test server, not a live hosted model' };
+  writeFileSync(join(logdir, 'result.json'), JSON.stringify(evidence, null, 2));
+  console.log(JSON.stringify(evidence));
 } finally {
+  await browser?.close();
   for (const child of [...children]) await stop(child);
   provider.closeAllConnections(); await new Promise(r => provider.close(r));
   writeFileSync(join(logdir, 'app.log'), log);

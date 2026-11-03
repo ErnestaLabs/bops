@@ -8,7 +8,7 @@ import type { Instrumentation } from "next";
  * loads it from Bops Cloud too, on the key in its file, and then starts what it runs (runner-start.ts).
  */
 export async function register() {
-  if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  if (process.env.NEXT_RUNTIME !== "nodejs" || process.env.BOPS_PRIVATE_BUILD === "1") return;
   // The build this server runs, as it was when it started (app/api/health): if the app's files are
   // replaced while it runs, the Mac app sees it's an old server and starts a new one.
   const { readFileSync } = await import("node:fs");
