@@ -22,7 +22,7 @@ const browserMarker = `PRIVATE_BROWSER_${randomBytes(8).toString('hex')}`;
 const chatMarker = `PRIVATE_CHAT_${randomBytes(8).toString('hex')}`;
 const logdir = resolve(process.env.BOPS_ACCEPTANCE_LOG_DIR || join(root, '.scratch/app-acceptance'));
 mkdirSync(logdir, { recursive: true });
-let browser, serverProcess, log = '', received = 0, taskToolCalls = 0, verifiedOutput = false;
+let browser, serverProcess, log = '', received = 0, taskToolCalls = 0, verifiedOutput = false, compactRequests = 0;
 const children = new Set();
 const listen = s => new Promise((ok, bad) => { s.once('error', bad); s.listen(0, '127.0.0.1', ok); });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -48,7 +48,11 @@ const provider = createServer(async (req, res) => {
     assert.equal(body.stream, false);
     const names = (body.tools || []).map(x => x.function?.name);
     let content = JSON.stringify(body.messages).includes(browserMarker) ? browserMarker : chatMarker, tool_calls;
-    if (names.includes('run_command')) {
+    if (body.messages[0]?.content?.includes?.('PRIVATE_CONTEXT_COMPACTION')) {
+      compactRequests++;
+      assert.equal(body.tools, undefined, 'Compaction must offer no executable tools');
+      content = `The task wrote ${marker} into /workspace/private-acceptance.txt. Preserve this observed result; do not repeat the command. No external actions were authorized.`;
+    } else if (names.includes('run_command')) {
       const output = body.messages.find(m => m.role === 'tool' && typeof m.content === 'string' && m.content.includes(marker));
       if (output) {
         assert.match(output.content, /exit code 0/); verifiedOutput = true; content = marker;
@@ -199,6 +203,19 @@ try {
   assert.equal(ran.enabled, false, 'Once-only routine must not repeat');
   assert.ok((await call('/api/state')).state.sessions.some(x => x.routineId === routineId && x.status === 'done' && x.answer === marker));
   assert.equal(taskToolCalls, 3, 'Exactly the initial, delegated and scheduled tasks must execute');
+  // Compact through the existing real task endpoint, then continue after restart.
+  const beforeCompact = (await call('/api/state')).state.sessions.find(x => x.id === task.id).responseId;
+  await call(`/api/sessions/${task.id}/compact`, {});
+  const compacted = await waitFor(state => {
+    const session = state.sessions.find(x => x.id === task.id);
+    if (session?.steps.some(x => x.detail?.startsWith("Couldn't compact:"))) throw new Error('Application compaction failed');
+    return session?.status === 'done' && session.responseId !== beforeCompact && session.steps.some(x => x.tool === 'compacted') ? session : null;
+  }, 'Private task compaction');
+  assert.ok(compactRequests > 0); assert.equal(taskToolCalls, 3, 'Compaction must not execute a task');
+  const responseFile = join(data, 'responses', `${compacted.responseId}.json`);
+  const savedCompaction = JSON.parse(readFileSync(responseFile, 'utf8'));
+  assert.equal(savedCompaction.response.compaction.source_response_id, beforeCompact);
+  assert.ok(existsSync(join(data, 'responses', savedCompaction.response.compaction.source_snapshot)));
   const ownerName = `Restart ${randomBytes(6).toString('hex')}`;
   await call('/api/owner', { name: ownerName, about: 'Written immediately before shutdown' });
   await stop(serverProcess);
@@ -218,6 +235,14 @@ try {
   assert.equal(restored.bots.find(x => x.id === delegateBotId)?.computerId, specialistComputer);
   assert.equal(restored.sessions.find(x => x.id === delegated.id)?.answer, marker);
   assert.equal(restored.routines.find(x => x.id === routineId)?.last?.status, 'ok');
+  assert.equal(restored.sessions.find(x => x.id === task.id)?.responseId, compacted.responseId);
+  await call(`/api/sessions/${task.id}/reply`, { text: 'Report the marker already written. Do not run the command again.' });
+  await waitFor(state => {
+    const session = state.sessions.find(x => x.id === task.id);
+    if (session?.status === 'failed') throw new Error(`Post-compaction continuation failed: ${session.error}`);
+    return session?.status === 'done' && session.responseId !== compacted.responseId && session.answer === marker;
+  }, 'Post-compaction continuation');
+  assert.equal(taskToolCalls, 3, 'Continuing compacted history must not replay the original tool call');
   let browserUI = false;
   if (process.env.BOPS_BROWSER_ACCEPTANCE === '1') {
     const { chromium } = await import('playwright');
@@ -243,7 +268,7 @@ try {
     await browser.close(); browser = undefined; browserUI = true;
   }
   await stop(serverProcess);
-  const evidence = { passed: true, productionBuild: true, existingStatePreservedDuringBuild: true, privateLogin: true, chat: true, task: true, realDockerOutput: true, realDockerFile: true, existingScreenRoute: true, cleanShutdown: true, restartPersistence: true, specialistDelegation: true, separateWorkerVolumes: true, scheduledRoutine: true, teamRestartPersistence: true, telemetryDisabled: true, browserReplyAndDesktop: browserUI, browserUI, providerRequests: received, providerType: 'local deterministic test server, not a live hosted model' };
+  const evidence = { passed: true, productionBuild: true, existingStatePreservedDuringBuild: true, privateLogin: true, chat: true, task: true, realDockerOutput: true, realDockerFile: true, existingScreenRoute: true, cleanShutdown: true, restartPersistence: true, specialistDelegation: true, separateWorkerVolumes: true, scheduledRoutine: true, teamRestartPersistence: true, taskCompaction: true, compactedContextSurvivesRestart: true, noToolReplayAfterCompaction: true, telemetryDisabled: true, browserReplyAndDesktop: browserUI, browserUI, providerRequests: received, providerType: 'local deterministic test server, not a live hosted model' };
   writeFileSync(join(logdir, 'result.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));
 } finally {

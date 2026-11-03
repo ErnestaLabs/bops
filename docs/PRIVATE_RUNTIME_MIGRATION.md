@@ -131,12 +131,38 @@ capability, web egress, host permissions and resource limits must be verified on
 customer's server. No such customer production deployment or live hosted-provider result
 is claimed by the deterministic CI test.
 
+## Longer tasks and provider streaming
+
+Task **Compact** now creates a summary using the selected hosted model, with no tools
+available to that summary request. Pending calls must be settled first; complete recent
+message/tool-result groups stay together. The summary is explicitly lossy and marked as
+untrusted context, not an instruction or new authorization. Older screenshots are omitted
+from summarization and must be re-observed. This is explicit compaction, not automatic
+truncation at a context limit. It costs inference tokens on the configured provider.
+
+Original response records remain unchanged. Each successful compaction also retains a
+mode-600 source snapshot, including the newly settled tool outputs, and records its SHA-256.
+The new response is committed only after all summary batches succeed. Provider errors,
+invalid summaries or cancellation leave the original conversation usable. Deleting a
+compacted response removes its associated source snapshot, not its preceding responses.
+No guarantee is made that a model-written summary preserves every detail.
+
+Requests that ask for streaming now use real provider SSE. Text arrives incrementally,
+including in the existing app-generation path that requests streaming. This does not
+change every ordinary chat/task call into a streamed UI. Complete tool calls are withheld
+until final framing and argument validation pass. Interrupted/refused/truncated responses
+are not marked complete or written to history, and no other provider is silently tried.
+
+For an endpoint that accepts only JSON, set `BOPS_INFERENCE_STREAM=0` explicitly to use
+buffered compatibility. `BOPS_INFERENCE_STREAM_USAGE=0` disables the optional streaming
+usage extension for providers that do not support it. Neither setting changes provider.
+
 ## Explicit unsupported features
 
 Live VNC/WebRTC, realtime voice, image generation, provider-native Agents APIs, legacy
-remote conversation resumption, context compaction, and memory/disk cloning are not
-implemented by this private transport. Unsupported calls fail explicitly. Text streaming
-is buffered event compatibility, not live provider-token streaming. Hosted-native web
+remote conversation resumption and memory/disk cloning are not
+implemented by this private transport. Unsupported calls fail explicitly. The SDK-style
+event-emitter `.responses.stream()` API is not implemented; use `.create({ stream: true })`. Hosted-native web
 search is not advertised; research uses the assigned browser when its network permits.
 Existing optional integrations may send data to the services the customer configures.
 
