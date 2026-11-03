@@ -16,6 +16,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const unready = notReady();
   if (unready) return unready;
+  if (process.env.BOPS_PRIVATE_RUNTIME === "1") return Response.json({ error: "Usage telemetry is disabled in the private runtime." }, { status: 403 });
   const body = (await request.json().catch(() => ({}))) as { share?: unknown };
   if (typeof body.share !== "boolean") return Response.json({ error: "share must be true or false" }, { status: 400 });
   if (!getState().account) return Response.json({ error: "Sign in with Orgo first." }, { status: 401 });

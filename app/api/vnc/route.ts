@@ -20,6 +20,7 @@ export const dynamic = "force-dynamic";
  * as screenshots. Answers only the app on this Mac, since the reply carries the computer's VNC password.
  */
 export async function GET(request: Request) {
+  if (process.env.BOPS_PRIVATE_RUNTIME === "1") return Response.json({ mode: "screenshots", error: "Private desktops use the screenshot view." }, { status: 409 });
   if (!local(request)) return Response.json({ error: "local only" }, { status: 403 });
   const url = new URL(request.url);
   const b = bot(url.searchParams.get("bot") ?? "");
@@ -65,6 +66,7 @@ export async function GET(request: Request) {
  * lib/rtc.ts): the screen goes back to its real size, and streams over VNC for a day (orgo.screenShrunk).
  */
 export async function POST(request: Request) {
+  if (process.env.BOPS_PRIVATE_RUNTIME === "1") return Response.json({ error: "Private screens have a fixed resolution." }, { status: 409 });
   if (!local(request)) return Response.json({ error: "local only" }, { status: 403 });
   const b = bot(new URL(request.url).searchParams.get("bot") ?? "");
   const c = b && workComputer(b);

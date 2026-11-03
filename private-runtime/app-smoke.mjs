@@ -16,6 +16,7 @@ const data = join(temp, 'configured-data');
 const install = `acceptance-${randomBytes(8).toString('hex')}`;
 const token = randomBytes(32).toString('hex');
 const marker = `PRIVATE_TASK_${randomBytes(8).toString('hex')}`;
+const browserMarker = `PRIVATE_BROWSER_${randomBytes(8).toString('hex')}`;
 const chatMarker = `PRIVATE_CHAT_${randomBytes(8).toString('hex')}`;
 const logdir = resolve(process.env.BOPS_ACCEPTANCE_LOG_DIR || join(root, '.scratch/app-acceptance'));
 mkdirSync(logdir, { recursive: true });
@@ -44,7 +45,7 @@ const provider = createServer(async (req, res) => {
     assert.equal(body.model, 'acceptance-model'); assert.equal(body.previous_response_id, undefined);
     assert.equal(body.stream, false);
     const names = (body.tools || []).map(x => x.function?.name);
-    let content = chatMarker, tool_calls;
+    let content = JSON.stringify(body.messages).includes(browserMarker) ? browserMarker : chatMarker, tool_calls;
     if (names.includes('run_command')) {
       const output = body.messages.find(m => m.role === 'tool' && typeof m.content === 'string' && m.content.includes(marker));
       if (output) {
@@ -125,6 +126,8 @@ try {
   const bot = first.bots.find(b => b.isMain);
   const chat = first.chats.find(c => c.kind === 'bot' && c.botIds.includes(bot.id));
   await call('/api/account'); await call('/api/config');
+  const analytics = await call('/api/analytics');
+  assert.deepEqual([analytics.on, analytics.share, analytics.locked], [false, false, true]);
   await call(`/api/chats/${encodeURIComponent(chat.id)}/messages`, { text: `Reply with this exact acceptance marker: ${chatMarker}` });
   let chatted = false;
   for (let i = 0; i < 80; i++) {
@@ -174,24 +177,27 @@ try {
     const { chromium } = await import('playwright');
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-    const errors = [];
+    const errors = [], failedRoutes = [];
+    page.on('response', r => { if (r.url().startsWith(base) && r.status() >= 500) failedRoutes.push(`${r.status()} ${new URL(r.url()).pathname}`); });
     page.on('pageerror', e => errors.push(e.message));
     await page.goto(base, { waitUntil: 'domcontentloaded' });
     await page.getByLabel('Owner token').fill(token);
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     const composer = page.getByPlaceholder(/^Text /).first();
     await composer.waitFor({ state: 'visible', timeout: 45000 });
-    await composer.fill('Browser acceptance: reply with the acceptance marker.');
+    await composer.fill(`Browser acceptance: reply with exactly ${browserMarker}`);
     const posted = page.waitForResponse(r => r.url().includes('/messages') && r.request().method() === 'POST');
     await page.getByRole('button', { name: 'Send', exact: true }).first().click();
     assert.equal((await posted).status(), 200);
-    await page.getByText(chatMarker, { exact: true }).first().waitFor({ timeout: 30000 });
+    await page.getByText(browserMarker, { exact: true }).first().waitFor({ timeout: 30000 });
+    await page.waitForFunction(() => [...document.images].some(img => img.src.includes('/api/screen?') && img.complete && img.naturalWidth > 100), null, { timeout: 30000 });
+    assert.deepEqual(failedRoutes, [], 'The browser must not encounter server-error routes');
     await page.screenshot({ path: join(logdir, 'private-app-browser.png'), fullPage: true });
     assert.deepEqual(errors, [], 'The real browser must not have uncaught JavaScript errors');
     await browser.close(); browser = undefined; browserUI = true;
   }
   await stop(serverProcess);
-  const evidence = { passed: true, productionBuild: true, existingStatePreservedDuringBuild: true, privateLogin: true, chat: true, task: true, realDockerOutput: true, realDockerFile: true, existingScreenRoute: true, cleanShutdown: true, restartPersistence: true, browserUI, providerRequests: received, providerType: 'local deterministic test server, not a live hosted model' };
+  const evidence = { passed: true, productionBuild: true, existingStatePreservedDuringBuild: true, privateLogin: true, chat: true, task: true, realDockerOutput: true, realDockerFile: true, existingScreenRoute: true, cleanShutdown: true, restartPersistence: true, telemetryDisabled: true, browserReplyAndDesktop: browserUI, browserUI, providerRequests: received, providerType: 'local deterministic test server, not a live hosted model' };
   writeFileSync(join(logdir, 'result.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));
 } finally {

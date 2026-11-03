@@ -97,6 +97,11 @@ export function captureServerException(err: unknown, routePath?: string): void {
 
 /** GET /api/analytics. */
 export function analyticsInfo(): AnalyticsInfo {
+  if (process.env.BOPS_PRIVATE_RUNTIME === "1") return {
+    on: false, share: false, locked: true, userId: null, internal: false,
+    environment: process.env.NODE_ENV === "production" ? "production" : "development",
+    appVersion: appVersion() ?? null, plan: null,
+  };
   const s = getState();
   const user = cloudOn() ? (s.account?.user ?? null) : null;
   return {
