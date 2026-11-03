@@ -6,6 +6,7 @@ export const COMPONENTS = [
   { id: 'trigger', name: 'Trigger.dev', role: 'One top-level scheduler, queues and attempts', state: 'scaffold', version: '4.8.3', note: 'Adapter scaffold, not a running service. Do not activate alongside the same Bops schedules.' },
   { id: 'control', name: 'Workflow contract', role: 'Validation, permissions, action receipts and evidence', state: 'contract-tested', note: 'Executable state model and local action journal. Not a distributed workflow engine.' },
   { id: 'skyvern', name: 'Skyvern', role: 'Browser actions, extraction and artifacts', state: 'scaffold', version: '1.0.56', note: 'Self-hosted API adapter. Live model, browser and network acceptance remain required.' },
+  { id: 'harness2', name: 'Harness²', role: 'Offline harness improvement: propose, probe, compose, review', state: 'scaffold', version: '0.1.0', note: 'Apache-2.0 research framework. Runs outside live jobs; candidate harnesses require tests and explicit adoption.' },
   { id: 'docker', name: 'Private computers', role: 'Customer-owned browsers, files and approved egress', state: 'existing-core', note: 'Existing Docker and public-page egress acceptance passed; not yet certified for Skyvern.' },
   { id: 'inference', name: 'Chosen hosted model', role: 'Reasoning and vision, no mandatory local GPU', state: 'deployment-required', note: 'Provider receives selected prompts/screenshots. No Orgo/OpenAI/xAI fallback.' },
 ];
@@ -65,7 +66,7 @@ const definitions = [
   ['cancel','Recovery','Request and confirm cancellation','operator','write','Cancel request plus remote terminal confirmation','Existing Bops stop; Skyvern cancel integration pending','mapped'],
   ['restart','Recovery','Recover after a process restart','control','read','Restored receipts, state and unresolved-action list','Existing Bops restart tests; external ledger contract','existing-core'],
   ['compact','Recovery','Compact context without replay','bops','read','Original snapshot, summary hash and settled-tool references','private-runtime/compaction.mjs','existing-core'],
-  ['repair','Operations','Diagnose and repair a failed recipe','operator','write','Incident bundle, reviewed patch and successful rehearsal','Versioned source and CI','mapped'],
+  ['repair','Operations','Diagnose and repair a failed recipe','harness2','write','Incident bundle, candidate harness diff, probe evidence, reviewed patch and successful rehearsal','Harness² sandbox + versioned source + CI','mapped'],
   ['backup','Operations','Back up and test restore','operator','write','Encrypted backup manifest and separate restore check','Operator runbook required','mapped'],
   ['provider-switch','Operations','Change the inference provider','operator','write','Owner approval, new probes and no in-flight silent switch','private-runtime/doctor.mjs','mapped'],
   ['audit','Operations','Inspect retention and access history','operator','read','Run/step/action correlation and redacted export','Workflow status endpoint; retention policy required','mapped'],
