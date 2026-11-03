@@ -53,6 +53,8 @@ jobs:
         run: node private-runtime/app-smoke.mjs
         env:
           BOPS_BROWSER_ACCEPTANCE: "1"
+      - name: Unattended routines after restart (no browser or state polling)
+        run: node private-runtime/headless-smoke.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
