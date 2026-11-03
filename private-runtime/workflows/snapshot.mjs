@@ -8,7 +8,7 @@ export function snapshot(state, env = process.env, now = Date.now()) {
     coverage: 'Bops sessions only; Trigger and Skyvern health have not been probed.',
     privateRuntime: env.BOPS_PRIVATE_RUNTIME === '1',
     integrations: {
-      trigger: { configured: !!env.WORKFORCE_TRIGGER_URL, connected: false, verified: false },
+      trigger: { configured: !!env.TRIGGER_API_URL, connected: false, verified: false },
       skyvern: { configured: !!env.BOPS_SKYVERN_BASE_URL && !!env.BOPS_SKYVERN_API_KEY, connected: false, verified: false },
       inference: { configured: !!env.BOPS_INFERENCE_BASE_URL && !!env.BOPS_INFERENCE_MODEL, verified: false },
     },

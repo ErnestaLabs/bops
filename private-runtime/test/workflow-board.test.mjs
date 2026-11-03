@@ -75,3 +75,18 @@ test('an uncertain read submission cannot be relabelled into a retryable failure
   assert.equal(r.state,'outcome_unknown');
   assert.ok(!allowedControls(r).includes('retry'));
 });
+
+test('snapshot uses the same explicit Trigger API setting as its task scaffold', () => {
+  const result = snapshot({}, {TRIGGER_API_URL:'https://customer-trigger.example'}, 0);
+  assert.equal(result.integrations.trigger.configured,true);
+  assert.equal(result.integrations.trigger.connected,false);
+  assert.equal(result.integrations.trigger.verified,false);
+  assert.ok(!JSON.stringify(result).includes('customer-trigger.example'));
+});
+test('snapshot limits run rows but counts all observed sessions', () => {
+  const sessions = Array.from({length:125}, (_,i) => ({id:`s${i}`,botId:'b',status:'done',goal:'must stay private'}));
+  const result = snapshot({sessions},{},0);
+  assert.equal(result.counts.done,125); assert.equal(result.runs.length,100);
+  assert.equal(result.truncated,true); assert.equal(result.runs[0].id,'s124');
+  assert.ok(!JSON.stringify(result).includes('must stay private'));
+});
