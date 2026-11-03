@@ -1,7 +1,7 @@
 name: Workforce map
 on:
   push:
-    branches: [feat/private-provider-foundation]
+    branches: [feat/private-provider-foundation, feat/workforce-control-map]
   pull_request:
 permissions:
   contents: read
@@ -24,7 +24,7 @@ jobs:
         run: node --test private-runtime/test/*.test.mjs
       - run: npm ci
       - run: npx --no-install playwright install --with-deps chromium
-      - name: Visual map and recovery-control acceptance
+      - name: Connected canvas and navigation acceptance
         run: node private-runtime/workflows/browser-smoke.mjs
       - name: Portable map
         run: node private-runtime/workflows/export-map.mjs .scratch/workforce-map/workforce-control-map.html
