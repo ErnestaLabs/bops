@@ -1,20 +1,20 @@
 /** Hosted Chat Completions behind Bops' response-item interface. No vendor SDK.
  * History is stored on the customer's disk; only inference input leaves the server.
- * Streaming below is buffered event compatibility, not provider token streaming.
+ * Streamed requests use provider SSE; tools are released only after completion.
  */
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { InferenceError, fail } from './errors.mjs';
+import { completionDeltas } from './stream.mjs';
+import { compactMessages, COMPACTION_INSTRUCTIONS } from './compaction.mjs';
+export { InferenceError } from './errors.mjs';
 
 const LIMIT = 8 * 1024 * 1024;
 const ID = /^prv_[a-f0-9]{32}$/;
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
 const BLOCKED = ['openai.com', 'orgo.ai', 'bops.bot', 'x.ai'];
 const ACTIONS = ['screenshot', 'click', 'double_click', 'move', 'scroll', 'keypress', 'type', 'wait', 'drag'];
-export class InferenceError extends Error {
-  constructor(message, code = 'invalid_request', status = 400) { super(message); this.name = 'InferenceError'; this.code = code; this.status = status; }
-}
-const fail = (message, code, status) => { throw new InferenceError(message, code, status); };
 export function endpoint(value) {
   if (!value?.trim()) fail('Set BOPS_INFERENCE_BASE_URL. No default provider is used.', 'provider_not_configured', 503);
   let u;
@@ -71,7 +71,7 @@ export function inputMessages(input) {
       } else if (i.output?.type === 'computer_screenshot') images = content([{ type: 'input_image', image_url: i.output.image_url }]);
       else if (typeof i.output !== 'string') text = JSON.stringify(i.output ?? 'No output');
       out.push({ role: 'tool', tool_call_id: i.call_id, content: text, _images: images });
-    } else if (i.type === 'compaction_trigger') fail('Private context compaction is not implemented.', 'unsupported_capability', 501);
+    } else if (i.type === 'compaction_trigger') fail('Compaction trigger must be the final item of an explicit private compaction request.', 'invalid_compaction', 400);
     else if (i.role === 'assistant') { flush(); assistant = { role: 'assistant', content: content(i.content ?? '') }; }
     else {
       flush();
@@ -115,12 +115,17 @@ function load(c, id) {
     return j;
   } catch (e) { if (e instanceof InferenceError) throw e; fail('Local conversation history is missing or invalid.', 'context_missing', 409); }
 }
-function save(c, response, messages) {
+function save(c, response, messages, sourceText) {
   const data = JSON.stringify({ version: 1, response, messages });
   if (Buffer.byteLength(data) > LIMIT) fail('Conversation too large to persist.', 'context_limit', 413);
   mkdirSync(c.dir, { recursive: true, mode: 0o700 });
   const file = join(c.dir, `${response.id}.json`), temp = `${file}.${randomBytes(6).toString('hex')}.tmp`;
-  try { writeFileSync(temp, data, { flag: 'wx', mode: 0o600 }); renameSync(temp, file); }
+  const source = join(c.dir, `${response.id}.source.json`);
+  let sourceWritten = false;
+  try {
+    if (sourceText) { writeFileSync(source, sourceText, { flag: 'wx', mode: 0o600 }); sourceWritten = true; }
+    writeFileSync(temp, data, { flag: 'wx', mode: 0o600 }); renameSync(temp, file);
+  } catch (error) { if (sourceWritten) { try { unlinkSync(source); } catch {} } throw error; }
   finally { try { unlinkSync(temp); } catch {} }
 }
 async function jsonResponse(res) {
@@ -179,35 +184,120 @@ async function* events(r) {
   }
   yield { type: 'response.completed', response: r, sequence_number: seq++ };
 }
+/** No result is persisted until validation, cancellation and storage checks finish. */
 export function privateClient({ env = process.env, fetchImpl = fetch } = {}) {
+  async function request(c, payload, options, signal) {
+    const raw = JSON.stringify(payload);
+    if (Buffer.byteLength(raw) > LIMIT) fail('Request too large. Compact this private task explicitly before continuing.', 'context_limit', 413);
+    signal.throwIfAborted(); let res;
+    try { res = await fetchImpl(`${c.baseURL}/chat/completions`, { method: 'POST', redirect: 'error', signal, headers: { 'Content-Type': 'application/json', ...(c.key ? { Authorization: `Bearer ${c.key}` } : {}) }, body: raw }); }
+    catch { if (signal.aborted) throw signal.reason; fail('Configured provider unreachable. No alternative provider contacted.', 'provider_unreachable', 502); }
+    if (!res.ok) { await res.body?.cancel(); fail(`Inference provider returned HTTP ${res.status}.`, 'provider_error', res.status); }
+    return res;
+  }
   async function create(body, options = {}) {
     const c = config(env);
     if (!body || typeof body !== 'object') fail('Missing request body.');
     if (body.background) fail('Provider background jobs are disabled.', 'unsupported_capability', 501);
-    const { tools, notes } = toolsFor(body.tools);
+    const model = env.BOPS_PRIVATE_MODEL_OVERRIDES === '1' && body.model ? modelAllowed(body.model) : c.model;
+    const timer = AbortSignal.timeout(Math.max(100, Math.min(Number(options.timeout) || 120000, 300000)));
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, timer, ...(options.signal ? [options.signal] : [])]);
+    signal.throwIfAborted();
     const previous = body.previous_response_id ? load(c, body.previous_response_id).messages : [];
+    const compact = Array.isArray(body.input) && body.input.some(i => i?.type === 'compaction_trigger');
+    if (compact) {
+      if (!body.previous_response_id || body.store === false || body.stream || body.input.at(-1)?.type !== 'compaction_trigger' || body.input.filter(i => i?.type === 'compaction_trigger').length !== 1) fail('Compaction requires stored private history and one final trigger, without streaming.', 'invalid_compaction', 400);
+      const messages = [...previous, ...inputMessages(body.input.slice(0, -1))];
+      const sourceText = JSON.stringify({ version: 1, source_response_id: body.previous_response_id, messages });
+      if (Buffer.byteLength(sourceText) > LIMIT * 2) fail('Compaction source exceeds its archive bound.', 'compaction_limit', 413);
+      const totals = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
+      const compacted = await compactMessages(messages, async input => {
+        const res = await request(c, { model, stream: false, max_tokens: 2048, messages: [{ role: 'system', content: COMPACTION_INSTRUCTIONS }, { role: 'user', content: input }] }, options, signal);
+        const { response, message } = resultOf(await jsonResponse(res), { ...c, model }, new Set(), env);
+        signal.throwIfAborted();
+        if (message.tool_calls?.length) fail('The summarizer must not return tools.', 'invalid_summary', 502);
+        for (const key of Object.keys(totals)) totals[key] += response.usage[key];
+        return response.output_text;
+      }, { signal });
+      signal.throwIfAborted();
+      const response = { id: `prv_${randomBytes(16).toString('hex')}`, object: 'response', status: 'completed', created_at: Math.floor(Date.now() / 1000), model, output_text: '',
+        output: [{ type: 'compaction', id: `compact_${randomBytes(8).toString('hex')}`, summary: compacted.summary }],
+        usage: { ...totals, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } },
+        compaction: { source_response_id: body.previous_response_id, lossy: true, batches: compacted.batches, retained_messages: compacted.retainedMessages },
+      };
+      response.compaction.source_snapshot = `${response.id}.source.json`;
+      response.compaction.source_sha256 = createHash('sha256').update(sourceText).digest('hex');
+      save(c, response, compacted.messages, sourceText);
+      return response;
+    }
+    const { tools, notes } = toolsFor(body.tools);
     const messages = [...previous, ...inputMessages(body.input)];
     const instructions = [body.instructions, ...notes].filter(Boolean).join('\n\n');
-    const payload = { model: env.BOPS_PRIVATE_MODEL_OVERRIDES === '1' && body.model ? modelAllowed(body.model) : c.model, messages: [...(instructions ? [{ role: 'system', content: instructions }] : []), ...messages], stream: false, ...(tools.length ? { tools } : {}) };
+    const streaming = body.stream === true && env.BOPS_INFERENCE_STREAM !== '0';
+    const payload = { model, messages: [...(instructions ? [{ role: 'system', content: instructions }] : []), ...messages], stream: streaming, ...(tools.length ? { tools } : {}) };
+    if (streaming && env.BOPS_INFERENCE_STREAM_USAGE !== '0') payload.stream_options = { include_usage: true };
     if (body.max_output_tokens !== undefined) payload.max_tokens = body.max_output_tokens;
     if (body.temperature !== undefined) payload.temperature = body.temperature;
+    if (body.parallel_tool_calls !== undefined) payload.parallel_tool_calls = body.parallel_tool_calls;
     if (body.tool_choice) payload.tool_choice = body.tool_choice.type === 'function' ? { type: 'function', function: { name: body.tool_choice.name } } : body.tool_choice;
     const f = body.text?.format;
     if (f?.type === 'json_schema') payload.response_format = { type: 'json_schema', json_schema: { name: f.name, schema: f.schema, strict: f.strict ?? true } };
     else if (f?.type === 'json_object') payload.response_format = { type: 'json_object' };
     else if (f && f.type !== 'text') fail('Unsupported output format.', 'unsupported_capability', 501);
-    const raw = JSON.stringify(payload);
-    if (Buffer.byteLength(raw) > LIMIT) fail('Request too large.', 'context_limit', 413);
-    const timer = AbortSignal.timeout(Math.max(100, Math.min(Number(options.timeout) || 120000, 300000)));
-    const signal = options.signal ? AbortSignal.any([options.signal, timer]) : timer;
-    signal.throwIfAborted(); let res;
-    try { res = await fetchImpl(`${c.baseURL}/chat/completions`, { method: 'POST', redirect: 'error', signal, headers: { 'Content-Type': 'application/json', ...(c.key ? { Authorization: `Bearer ${c.key}` } : {}) }, body: raw }); }
-    catch { if (signal.aborted) throw signal.reason; fail('Configured provider unreachable. No alternative provider contacted.', 'provider_unreachable', 502); }
-    if (!res.ok) { await res.body?.cancel(); fail(`Inference provider returned HTTP ${res.status}.`, 'provider_error', res.status); }
-    const { response, message } = resultOf(await jsonResponse(res), c, new Set(tools.map(t => t.function.name)), env);
-    if (body.store !== false) save(c, response, [...messages, message]);
+    const res = await request(c, payload, options, signal);
+    const allowed = new Set(tools.map(t => t.function.name));
+    const commit = (response, message) => { signal.throwIfAborted(); if (body.store !== false) save(c, response, [...messages, message]); };
+    if (streaming) return streamedEvents(res, { c: { ...c, model }, allowed, env, signal, controller, commit });
+    const { response, message } = resultOf(await jsonResponse(res), { ...c, model }, allowed, env);
+    commit(response, message);
     return body.stream ? events(response) : response;
   }
-  const api = { get baseURL() { return config(env).baseURL; }, apiKey: async () => config(env).key ?? '', responses: { create, retrieve: async id => load(config(env), id).response, delete: async id => { const c = config(env); load(c, id); unlinkSync(join(c.dir, `${id}.json`)); return { id, deleted: true }; } } };
+  const api = { get baseURL() { return config(env).baseURL; }, apiKey: async () => config(env).key ?? '', responses: { create, retrieve: async id => load(config(env), id).response, delete: async id => { const c = config(env); load(c, id); unlinkSync(join(c.dir, `${id}.json`)); try { unlinkSync(join(c.dir, `${id}.source.json`)); } catch (e) { if (e.code !== 'ENOENT') throw e; } return { id, deleted: true }; } } };
   return new Proxy(api, { get(target, key, receiver) { if (Reflect.has(target, key) || typeof key === 'symbol' || key === 'then') return Reflect.get(target, key, receiver); fail(`Legacy ${String(key)} API is unavailable in private mode. No request sent.`, 'unsupported_capability', 501); } });
+}
+
+/** Text is provisional until response.completed. Never expose partial tool calls. */
+async function* streamedEvents(res, { c, allowed, env, signal, controller, commit }) {
+  const id = `prv_${randomBytes(16).toString('hex')}`, itemId = `msg_${randomBytes(8).toString('hex')}`;
+  let seq = 0, textStarted = false, completed = false;
+  const event = (type, props) => ({ type, ...props, sequence_number: seq++ });
+  const at = { item_id: itemId, output_index: 0, content_index: 0 };
+  try {
+    yield event('response.created', { response: { id, object: 'response', status: 'in_progress', created_at: Math.floor(Date.now() / 1000), model: c.model, output: [], output_text: '' } });
+    for await (const delta of completionDeltas(res, { signal, limit: LIMIT })) {
+      if (delta.text !== undefined) {
+        if (!textStarted) {
+          textStarted = true;
+          yield event('response.output_item.added', { output_index: 0, item: { id: itemId, type: 'message', role: 'assistant', status: 'in_progress', content: [] } });
+          yield event('response.content_part.added', { ...at, part: { type: 'output_text', text: '', annotations: [] } });
+        }
+        yield event('response.output_text.delta', { ...at, delta: delta.text });
+      }
+      if (delta.result) {
+        const { response, message } = resultOf(delta.result, c, allowed, env);
+        response.id = id;
+        if (textStarted) response.output.find(item => item.type === 'message').id = itemId;
+        commit(response, message);
+        // Validation/persistence precede completed items, especially executable tools.
+        if (textStarted) {
+          const item = response.output.find(item => item.type === 'message');
+          yield event('response.output_text.done', { ...at, text: response.output_text });
+          yield event('response.content_part.done', { ...at, part: item.content[0] });
+          yield event('response.output_item.done', { output_index: 0, item });
+        }
+        for (const [i, item] of response.output.entries()) {
+          if (item.type === 'message') continue;
+          yield event('response.output_item.added', { output_index: i, item });
+          if (item.type === 'function_call') yield event('response.function_call_arguments.done', { item_id: item.id, output_index: i, name: item.name, arguments: item.arguments });
+          yield event('response.output_item.done', { output_index: i, item });
+        }
+        completed = true;
+        yield event('response.completed', { response });
+      }
+    }
+  } finally {
+    if (!completed) controller.abort(new Error('Stream consumer closed before completion.'));
+    if (!res.body?.locked) await res.body?.cancel().catch(() => {});
+  }
 }

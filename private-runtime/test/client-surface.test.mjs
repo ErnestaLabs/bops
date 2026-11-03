@@ -18,7 +18,7 @@ test('unsupported services fail at invocation without requesting credentials', (
 });
 test('application facade preserves real response objects, tool results and buffered events', async()=>{
   let sent;
-  const c=applicationClient({env:{BOPS_INFERENCE_BASE_URL:'http://127.0.0.1:7000/v1',BOPS_INFERENCE_MODEL:'test'},fetchImpl:async(url,o)=>{sent=JSON.parse(o.body);return Response.json({choices:[{finish_reason:'stop',message:{content:'works'}}]});}});
+  const c=applicationClient({env:{BOPS_INFERENCE_BASE_URL:'http://127.0.0.1:7000/v1',BOPS_INFERENCE_MODEL:'test',BOPS_INFERENCE_STREAM:'0'},fetchImpl:async(url,o)=>{sent=JSON.parse(o.body);return Response.json({choices:[{finish_reason:'stop',message:{content:'works'}}]});}});
   const r=await c.responses.create({input:[{role:'user',content:[{type:'input_text',text:'hi'}]}],tools:[{type:'web_search'}],parallel_tool_calls:false,store:false});
   assert.equal(r.output[0].type,'message');assert.equal(r.output_text,'works');assert.equal(sent.messages.at(-1).content[0].text,'hi');
   const stream=await c.responses.create({input:'hi',stream:true,store:false});
