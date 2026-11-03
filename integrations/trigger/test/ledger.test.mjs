@@ -1,0 +1,17 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { Pool } from 'pg';
+import { postgresLedger } from '../../../private-runtime/workflows/postgres-ledger.mjs';
+import { browserRequest, dispatchBrowserWorkflow } from '../../../private-runtime/workflows/skyvern-client.mjs';
+import { digest, signApproval } from '../../../private-runtime/workflows/contracts.mjs';
+const url=process.env.ERNESTA_LEDGER_TEST_DATABASE_URL;
+if(!url)throw new Error('Set an isolated test database; never run against customer production.');
+const pool=new Pool({connectionString:url,max:8});
+await pool.query(readFileSync(new URL('../../../private-runtime/workflows/ledger.sql',import.meta.url),'utf8'));
+test.after(()=>pool.end());
+const hash=()=>randomBytes(32).toString('hex');
+test('real Postgres concurrent reservation has exactly one owner',async()=>{const ledger=postgresLedger(pool),key=hash(),h=hash();const all=await Promise.all(Array.from({length:8},()=>ledger.reserve(key,h)));assert.equal(all.filter(x=>x.created).length,1);const {rows}=await pool.query('SELECT * FROM ernesta_workflow_events WHERE action_key=$1',[key]);assert.equal(rows.length,1);await assert.rejects(ledger.reserve(key,hash()),e=>e.code==='action_key_payload_conflict');});
+test('real Postgres receipt survives a new pool and resumes without second submission',async()=>{const action={actionKey:hash(),workflowId:'wpid_test',parameters:{record_id:'test-only'}},requestHash=digest(browserRequest(action,['wpid_test'])),key=hash();const approval=signApproval({actionKey:action.actionKey,requestHash,expiresAt:Date.now()+60000},key);let submissions=0;const client={async submit(){submissions++;return{remoteId:'wr_test'};},async get(id){return{remoteId:id,businessState:'VERIFYING',businessVerified:false};}};const args={client,ledger:postgresLedger(pool),allowedWorkflowIds:['wpid_test'],approvalKey:key,action,approval};await dispatchBrowserWorkflow(args);const other=new Pool({connectionString:url,max:1});try{const result=await dispatchBrowserWorkflow({...args,ledger:postgresLedger(other)});assert.equal(result.remoteId,'wr_test');assert.equal(result.businessVerified,false);assert.equal(submissions,1);}finally{await other.end();}});
+test('real Postgres ambiguous intent persists and cannot be replayed',async()=>{const action={actionKey:hash(),workflowId:'wpid_test',parameters:{}},h=digest(browserRequest(action,['wpid_test'])),key=hash(),ledger=postgresLedger(pool);let submissions=0;const args={ledger,client:{async submit(){submissions++;throw new Error('lost response');}},allowedWorkflowIds:['wpid_test'],approvalKey:key,action,approval:signApproval({actionKey:action.actionKey,requestHash:h,expiresAt:Date.now()+60000},key)};await assert.rejects(dispatchBrowserWorkflow(args));await assert.rejects(dispatchBrowserWorkflow(args));const {rows:[row]}=await pool.query('SELECT status,remote_id FROM ernesta_workflow_actions WHERE action_key=$1',[action.actionKey]);assert.equal(row.status,'OUTCOME_UNKNOWN');assert.equal(row.remote_id,null);assert.equal(submissions,1);});

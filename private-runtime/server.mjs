@@ -4,6 +4,7 @@
 import { createServer } from 'node:http';
 import next from 'next';
 import { authorizeRequest, rejectRequest } from './http-auth.mjs';
+import { handleWorkflowMap } from './workflows/http.mjs';
 const port = Number(process.env.PORT) || 3210;
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid PORT.');
 const dev = process.argv.includes('--dev');
@@ -13,7 +14,10 @@ const handle = app.getRequestHandler();
 const server = createServer(async (request, response) => {
   const decision = authorizeRequest(request);
   if (decision) return rejectRequest(response, decision);
-  try { await handle(request, response); }
+  try {
+    if (handleWorkflowMap(request, response)) return;
+    await handle(request, response);
+  }
   catch (error) {
     console.error('Private request failed:', error instanceof Error ? error.message : 'unknown error');
     if (!response.headersSent) rejectRequest(response, { status: 500, message: 'Application request failed.' });
