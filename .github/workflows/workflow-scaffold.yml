@@ -56,4 +56,5 @@ jobs:
             integrations/trigger/package-lock.json
             integrations/trigger/.scratch/workflow-map.png
             ${{ runner.temp }}/workforce-map.html
+          include-hidden-files: true
           retention-days: 3

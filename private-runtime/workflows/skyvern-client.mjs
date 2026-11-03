@@ -34,6 +34,7 @@ export function normalizeRun(data, expectedId) {
   // A remote "completed" is NOT independent proof of a business outcome.
   return { remoteId: runId, remoteStatus: data.status, businessState: states[data.status], businessVerified: false, cancellationUndo: false };
 }
+/** @param {{baseURL?: string, apiKey?: string, fetchImpl?: typeof fetch, timeoutMs?: number}} options */
 export function skyvernClient({ baseURL, apiKey, fetchImpl = fetch, timeoutMs = 15000 } = {}) {
   const base = selfHostedEndpoint(baseURL);
   if (typeof apiKey !== 'string' || !apiKey.trim()) throw new WorkflowError('skyvern_api_key_required');
