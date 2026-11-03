@@ -4,7 +4,6 @@
 import { createServer } from 'node:http';
 import next from 'next';
 import { authorizeRequest, rejectRequest } from './http-auth.mjs';
-if (process.env.BOPS_ACCEPTANCE_TRACE === '1') await import('./task-trace.mjs');
 const port = Number(process.env.PORT) || 3210;
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid PORT.');
 const dev = process.argv.includes('--dev');
@@ -21,8 +20,6 @@ const server = createServer(async (request, response) => {
     else response.destroy();
   }
 });
-// No websocket endpoint is enabled yet. Do not let a framework attach an unguarded
-// upgrade listener. Live desktop streaming will have its own authenticated route.
 server.on('upgrade', (request, socket) => {
   const decision = authorizeRequest(request) || { status: 501 };
   socket.end(`HTTP/1.1 ${decision.status} Rejected\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
