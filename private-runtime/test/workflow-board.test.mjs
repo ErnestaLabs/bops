@@ -90,3 +90,14 @@ test('snapshot limits run rows but counts all observed sessions', () => {
   assert.equal(result.truncated,true); assert.equal(result.runs[0].id,'s124');
   assert.ok(!JSON.stringify(result).includes('must stay private'));
 });
+
+
+test('Harness² is mapped as an offline improvement layer, never live dispatch', async () => {
+  const { COMPONENTS, FLOWS } = await import('../../public/workforce-map/catalogue.mjs');
+  const h = COMPONENTS.find(c => c.id === 'harness2');
+  assert.equal(h?.state, 'scaffold');
+  assert.match(h?.role || '', /improvement/i);
+  const repair = FLOWS.find(f => f.id === 'repair');
+  assert.equal(repair?.executor, 'harness2');
+  assert.equal(repair?.launch, 'Not enabled for live dispatch');
+});
