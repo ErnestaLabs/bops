@@ -1,0 +1,93 @@
+name: Private dependency candidate
+# One-time maintenance: resolve and validate an upgrade, publish immutable Git blobs,
+# but NEVER commit, push, merge or deploy. The reviewed blobs are adopted separately.
+on:
+  push:
+    branches: [feat/private-provider-foundation]
+    paths: [.github/workflows/private-dependency-candidate.yml]
+permissions:
+  contents: read
+jobs:
+  candidate:
+    if: github.repository == 'ErnestaLabs/bops' && github.ref == 'refs/heads/feat/private-provider-foundation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      NEXT_TELEMETRY_DISABLED: "1"
+      NODE_OPTIONS: "--max-old-space-size=4096"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+      - name: Resolve explicit patches without forced major upgrades
+        run: |
+          mkdir -p .scratch/dependency-candidate
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          p.dependencies.next = '16.4.4';
+          p.devDependencies['eslint-config-next'] = '16.4.4';
+          // CLI used during development/build only, never imported by the app server.
+          p.devDependencies.shadcn = p.dependencies.shadcn;
+          delete p.dependencies.shadcn;
+          // Honcho pins 4.0.0; use the patched release within the same Zod major.
+          p.overrides = { ...p.overrides, '@honcho-ai/sdk': { zod: '4.6.6' } };
+          fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          NODE
+          npm install --package-lock-only --ignore-scripts --no-fund
+          npm audit fix --package-lock-only --ignore-scripts --no-fund > .scratch/dependency-candidate/repair.log 2>&1 || test "$?" -eq 1
+      - name: Fresh install and runtime audit
+        run: |
+          npm ci
+          npm audit --omit=dev --json > .scratch/dependency-candidate/audit-runtime.json || test "$?" -eq 1
+          npm audit --json > .scratch/dependency-candidate/audit-all.json || test "$?" -eq 1
+          cp package.json package-lock.json .scratch/dependency-candidate/
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const a = JSON.parse(fs.readFileSync('.scratch/dependency-candidate/audit-runtime.json', 'utf8'));
+          const v = a.metadata.vulnerabilities;
+          console.log(JSON.stringify({ runtimeAudit: v }));
+          if (v.high || v.critical) throw new Error('Unresolved high/critical runtime advisories');
+          NODE
+      - name: Focused tests and application typechecks
+        run: |
+          npm run private:test
+          npx --no-install next typegen
+          npx --no-install tsc --noEmit -p .
+          npx --no-install tsc -p cloud/tsconfig.json --noEmit
+          npm run lint
+      - name: Publish reviewed-file candidates as immutable blobs only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const files = [];
+          for (const path of ['package.json', 'package-lock.json']) {
+            const r = await fetch(`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/git/blobs`, {
+              method: 'POST', headers: { Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json', 'X-GitHub-Api-Version': '2022-11-28' },
+              body: JSON.stringify({ content: fs.readFileSync(path).toString('base64'), encoding: 'base64' }),
+            });
+            if (!r.ok) throw new Error(`Git blob publication failed (${r.status})`);
+            const { sha } = await r.json();
+            if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error('Invalid blob SHA');
+            files.push({ path, sha });
+          }
+          const evidence = { sourceCommit: process.env.GITHUB_SHA, files, adopted: false, deployed: false };
+          fs.writeFileSync('.scratch/dependency-candidate/blobs.json', JSON.stringify(evidence, null, 2));
+          console.log(JSON.stringify(evidence));
+          NODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: private-dependency-candidate
+          path: .scratch/dependency-candidate
+          include-hidden-files: true
+          retention-days: 3
