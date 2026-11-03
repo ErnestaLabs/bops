@@ -6,11 +6,14 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { endpoint } from './inference.mjs';
+import { renderWorkflowMap } from './workflows/render.mjs';
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 // Load operator configuration before resolving storage or creating any files.
 if (process.env.BOPS_PRIVATE_ENV_FILE) process.loadEnvFile(resolve(process.env.BOPS_PRIVATE_ENV_FILE));
 const mode = process.argv[2] || 'start';
 if (!['start', 'dev', 'build'].includes(mode)) throw new Error('Use start, dev or build.');
+// Static operating map; generated only during build/dev, never from customer data.
+if (mode !== 'start') renderWorkflowMap();
 // Next imports routes in multiple build workers. They must never read or migrate
 // an existing customer's state, vault, browser profiles or conversation history.
 const buildDir = mode === 'build' ? mkdtempSync(join(tmpdir(), 'bops-private-build-')) : null;

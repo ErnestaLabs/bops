@@ -1,0 +1,14 @@
+{
+  "actionId": "example-page-observation-001",
+  "request": {
+    "url": "https://example.com/",
+    "prompt": "Read this page and extract its title. Do not submit any forms, log into accounts, or navigate elsewhere.",
+    "title": "Approved example-page observation",
+    "max_steps": 5,
+    "data_extraction_schema": {
+      "type": "object",
+      "properties": { "title": { "type": "string" } },
+      "required": ["title"]
+    }
+  }
+}
