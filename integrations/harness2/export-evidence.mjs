@@ -23,10 +23,8 @@ const safe = {
     errorCode: e.errorCode ? String(e.errorCode).slice(0,64) : null
   })) : []
 };
-const body = JSON.stringify(safe,null,2)+"
-";
+const body = JSON.stringify(safe,null,2)+"\n";
 safe.digest = createHash("sha256").update(body).digest("hex");
 mkdirSync(outDir,{recursive:true,mode:0o700});
-writeFileSync(resolve(outDir,"evidence.json"),JSON.stringify(safe,null,2)+"
-",{mode:0o600});
+writeFileSync(resolve(outDir,"evidence.json"),JSON.stringify(safe,null,2)+"\n",{mode:0o600});
 console.log(resolve(outDir,"evidence.json"));
