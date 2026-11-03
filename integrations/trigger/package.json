@@ -1,0 +1,12 @@
+{
+  "name": "@ernesta/workforce-trigger",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "trigger.dev dev",
+    "deploy": "trigger.dev deploy"
+  },
+  "dependencies": { "@trigger.dev/sdk": "4.8.3" },
+  "devDependencies": { "trigger.dev": "4.8.3" }
+}
