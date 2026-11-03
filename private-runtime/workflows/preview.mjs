@@ -2,7 +2,7 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 const root = new URL('../../public/workforce-map/',import.meta.url);
-const types = { 'index.html':'text/html; charset=utf-8','style.css':'text/css; charset=utf-8','app.mjs':'text/javascript; charset=utf-8','catalogue.mjs':'text/javascript; charset=utf-8','state.mjs':'text/javascript; charset=utf-8' };
+const types = { 'index.html':'text/html; charset=utf-8','style.css':'text/css; charset=utf-8','app.mjs':'text/javascript; charset=utf-8','catalogue.mjs':'text/javascript; charset=utf-8','state.mjs':'text/javascript; charset=utf-8','graphs.mjs':'text/javascript; charset=utf-8' };
 const port = Number(process.env.WORKFORCE_PREVIEW_PORT || 4310);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid preview port');
 const server = createServer(async (req,res) => {

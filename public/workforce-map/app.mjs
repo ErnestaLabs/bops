@@ -1,87 +1,84 @@
-import { FLOWS, COMPONENTS, FAILURES, VERSION, STATUS_LEGEND, validateCatalogue } from './catalogue.mjs';
-import { newRun, transition, allowedControls } from './state.mjs';
-const $ = id => document.getElementById(id);
-const text = (tag, value, className) => { const el = document.createElement(tag); el.textContent = value; if (className) el.className = className; return el; };
-let flow = FLOWS.find(f => f.id === 'submit-form'), run, stepId = 'dispatch';
-const counts = validateCatalogue(); $('flow-count').textContent = counts.workflows; $('step-count').textContent = counts.steps;
-for (const c of COMPONENTS) {
-  const b = text('button','', 'component'); b.append(text('span',c.state,'tag'),text('strong',c.name),text('small',c.role));
-  b.onclick = () => $('component-detail').textContent = `${c.name}${c.version ? ` ${c.version}` : ''}: ${c.note}`;
-  $('components').append(b);
+import { FLOWS, STATUS_LEGEND } from './catalogue.mjs';
+import { workflowGraph, systemGraph, validateGraph } from './graphs.mjs';
+const $=id=>document.getElementById(id), NS='http://www.w3.org/2000/svg';
+const el=(name,attrs={},value)=>{const n=document.createElementNS(NS,name);for(const[k,v]of Object.entries(attrs))n.setAttribute(k,String(v));if(value!==undefined)n.textContent=value;return n;};
+const html=(name,text,cls)=>{const n=document.createElement(name);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
+let graph,selected=null,pathId='all',pathStep=-1,camera={x:0,y:0,k:1},pointer=null,dragged=false;
+const layouts=new Map();let lastTap={};
+function toast(message){$('toast').textContent=message;$('toast').classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').classList.remove('show'),2500);}
+function wrap(value,max=21){const words=value.split(' '),lines=[''];for(const w of words){if((lines.at(-1)+' '+w).trim().length>max&&lines.at(-1))lines.push(w);else lines[lines.length-1]=(lines.at(-1)+' '+w).trim();}return lines;}
+function graphBounds(){const nodes=visibleNodes();return{x:Math.min(...nodes.map(n=>n.x))-35,y:Math.min(45,...nodes.map(n=>n.y))-30,w:Math.max(...nodes.map(n=>n.x+n.w))+85,h:Math.max(...nodes.map(n=>n.y+n.h))+65};}
+function visibleNodes(){return $('exceptions').checked?graph.nodes:graph.nodes.filter(n=>n.id.startsWith('n')||graph.id==='system');}
+function visibleEdges(){const ids=new Set(visibleNodes().map(n=>n.id));return graph.edges.filter(e=>ids.has(e.from)&&ids.has(e.to)&&($('exceptions').checked||e.kind==='normal'));}
+function point(n,port){return port==='left'?[n.x,n.y+n.h/2]:port==='right'?[n.x+n.w,n.y+n.h/2]:port==='top'?[n.x+n.w/2,n.y]:[n.x+n.w/2,n.y+n.h];}
+function rounded(points){let path=`M${points[0].join(',')}`;for(let i=1;i<points.length-1;i++){const a=points[i-1],b=points[i],c=points[i+1],l1=Math.hypot(b[0]-a[0],b[1]-a[1]),l2=Math.hypot(c[0]-b[0],c[1]-b[1]);if(!l1||!l2)continue;const r=Math.min(10,l1/2,l2/2),p=[b[0]-(b[0]-a[0])*r/l1,b[1]-(b[1]-a[1])*r/l1],q=[b[0]+(c[0]-b[0])*r/l2,b[1]+(c[1]-b[1])*r/l2];path+=` L${p.join(',')} Q${b.join(',')} ${q.join(',')}`;}return path+` L${points.at(-1).join(',')}`;}
+function edgeGeometry(e){const a=graph.nodes.find(n=>n.id===e.from),b=graph.nodes.find(n=>n.id===e.to);let fp=e.fromPort,tp=e.toPort,pts,label;
+ if(e.viaY!==undefined){fp||='bottom';tp||='top';const p=point(a,fp),q=point(b,tp);pts=[p,[p[0],e.viaY],[q[0],e.viaY],q];label=[(p[0]+q[0])/2,e.viaY-1];}
+ else if(e.viaX!==undefined){fp||='right';tp||='right';const p=point(a,fp),q=point(b,tp);pts=[p,[e.viaX,p[1]],[e.viaX,q[1]],q];label=[e.viaX,(p[1]+q[1])/2];}
+ else if(Math.abs(a.y-b.y)<10){fp||='right';tp||='left';const p=point(a,fp),q=point(b,tp);pts=[p,q];label=[(p[0]+q[0])/2,p[1]-9];}
+ else if(b.y>a.y){fp||='bottom';tp||='top';const p=point(a,fp),q=point(b,tp),y=(p[1]+q[1])/2;pts=[p,[p[0],y],[q[0],y],q];label=[(p[0]+q[0])/2,y];}
+ else{fp||='top';tp||='bottom';const p=point(a,fp),q=point(b,tp),y=(p[1]+q[1])/2;pts=[p,[p[0],y],[q[0],y],q];label=[(p[0]+q[0])/2,y];}
+ return{d:rounded(pts),label};}
+function render(){
+ const world=$('world');world.replaceChildren();
+ if(graph.id!=='system')for(const[y,title]of[[112,'EXECUTION'],[307,'EXCEPTIONS'],[512,'RECOVERY / HUMAN REVIEW']])if($('exceptions').checked||y===112)world.append(el('text',{x:40,y,class:'lane-label'},title));
+ const route=graph.paths.find(p=>p.id===pathId);const edgeSet=new Set(route?route.nodes.slice(1).map((n,i)=>`${route.nodes[i]}:${n}`):[]);
+ const visible=visibleEdges();
+ for(const e of visible){const {d,label}=edgeGeometry(e);const traced=route&&edgeSet.has(`${e.from}:${e.to}`);const g=el('g',{class:`edge ${e.kind}${route?(traced?' traced':' dim'):''}`,'data-edge':e.id});g.append(el('path',{d,class:'edge-line','marker-end':`url(#arrow-${e.kind})`}));if(e.label){const labelg=el('g',{class:'edge-label',transform:`translate(${label[0]},${label[1]})`}),width=Math.max(24,e.label.length*5.5+14);labelg.append(el('rect',{x:-width/2,y:-10,width,height:20,rx:4}),el('text',{'text-anchor':'middle',y:3},e.label));g.append(labelg);}world.append(g);}
+ for(const n of visibleNodes()){
+  const onroute=!route||route.nodes.includes(n.id),current=route&&route.nodes[pathStep]===n.id;
+  const g=el('g',{transform:`translate(${n.x},${n.y})`,class:`node ${n.kind}${selected===n.id?' selected':''}${onroute?'':' dim'}${current?' current':''}`,'data-node':n.id,role:'button',tabindex:0,'aria-label':`${n.title}. Owner: ${n.owner}`});
+  const shape=n.kind==='decision'?el('polygon',{points:`${n.w/2},0 ${n.w},${n.h/2} ${n.w/2},${n.h} 0,${n.h/2}`,class:'node-shape'}):el('rect',{width:n.w,height:n.h,rx:['end','stop'].includes(n.kind)?22:8,class:'node-shape'});g.append(shape);
+  g.append(el('text',{x:n.w/2,y:-11,'text-anchor':'middle',class:'node-owner'},n.owner));
+  const lines=wrap(n.title,n.kind==='decision'?19:24),start=n.h/2-(lines.length-1)*9;
+  lines.forEach((line,i)=>g.append(el('text',{x:n.w/2,y:start+i*18+4,'text-anchor':'middle',class:'node-title'},line)));
+  if(n.kind!=='decision') {g.append(el('circle',{cx:0,cy:n.h/2,r:3,class:'node-port'}),el('circle',{cx:n.w,cy:n.h/2,r:3,class:'node-port'}));}
+  g.addEventListener('click',()=>{if(!dragged)inspect(n.id);});g.addEventListener('dblclick',()=>{if(n.open)load(n.open);});
+  g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();inspect(n.id);}});
+  world.append(g);
+ }
+ $('summary').textContent=`${visibleNodes().length} nodes · ${visible.length} connections · design only`;
+ transform();renderMini();
 }
-for (const group of [...new Set(FLOWS.map(f => f.category))]) { const option = text('option',group); option.value = group; $('category').append(option); }
-for (const [code] of Object.entries(FAILURES)) { const option = text('option',code.replaceAll('_',' ')); option.value = code; $('fault').append(option); }
-$('fault').value = 'dispatch_uncertain';
-function list() {
-  $('flows').replaceChildren();
-  const q = $('search').value.toLowerCase();
-  for (const f of FLOWS.filter(f => (!$('category').value || f.category === $('category').value) && `${f.title} ${f.executor} ${f.category}`.toLowerCase().includes(q))) {
-    const b = text('button','',`flow-link${f.id === flow.id ? ' active' : ''}`); b.append(text('span',f.category),document.createTextNode(f.title)); b.onclick = () => { flow = f; stepId = 'dispatch'; reset(); show(); }; $('flows').append(b);
-  }
+function transform(){ $('world').setAttribute('transform',`translate(${camera.x},${camera.y}) scale(${camera.k})`);$('zoom').textContent=`${Math.round(camera.k*100)}%`;viewportMini(); }
+function fit(){if(!graph)return;const b=graphBounds(),c=$('canvas').getBoundingClientRect(),pad=28;camera.k=Math.min(1.13,Math.max(.12,Math.min((c.width-pad*2)/b.w,(c.height-pad*2)/(b.h+40))));camera.x=(c.width-b.w*camera.k)/2-b.x*camera.k;camera.y=(c.height-(b.h+30)*camera.k)/2-b.y*camera.k;transform();renderMini();}
+function zoom(factor,cx,cy){const r=$('canvas').getBoundingClientRect();cx??=r.width/2;cy??=r.height/2;const k=Math.max(.12,Math.min(2.5,camera.k*factor)),ratio=k/camera.k;camera.x=cx-(cx-camera.x)*ratio;camera.y=cy-(cy-camera.y)*ratio;camera.k=k;transform();}
+function renderMini(){const mini=$('minimap'),b=graphBounds();mini.setAttribute('viewBox',`${b.x} ${b.y} ${b.w} ${b.h}`);mini.replaceChildren();for(const e of visibleEdges())mini.append(el('path',{d:edgeGeometry(e).d,fill:'none',stroke:e.kind==='exception'?'#dca5a5':'#bcc6d8','stroke-width':5}));for(const n of visibleNodes())mini.append(el('rect',{x:n.x,y:n.y,width:n.w,height:n.h,rx:8,fill:n.kind==='failure'?'#ecc2c2':n.kind==='decision'?'#ebd4a3':'#b7c8e3'}));mini.append(el('rect',{id:'mini-viewport',class:'mini-viewport'}));viewportMini();}
+function viewportMini(){const v=$('mini-viewport');if(!v)return;const c=$('canvas').getBoundingClientRect();for(const[k,n]of Object.entries({x:-camera.x/camera.k,y:-camera.y/camera.k,width:c.width/camera.k,height:c.height/camera.k}))v.setAttribute(k,n);}
+function detail(label,value){const d=html('div',undefined,'detail');d.append(html('b',label));if(value instanceof Node)d.append(value);else d.append(html('p',value));return d;}
+function inspect(id){selected=id;const n=graph.nodes.find(n=>n.id===id);if(!n)return;
+ $('inspector').hidden=false;$('inspector-kicker').textContent=n.kind==='decision'?'DECISION / BRANCH':'WORKFLOW STEP';$('inspector-title').textContent=n.title;
+ const body=$('inspector-body');body.replaceChildren(detail('Responsible component',n.owner));
+ const contract=graph.flow?.steps.find(s=>s.id===n.phase);
+ if(n.detail)body.append(detail('What happens here',n.detail));
+ if(contract)body.append(detail('Catalogue contract',contract.title),detail('Evidence to keep',contract.evidence),detail('Recovery rule',contract.recovery));
+ else if(graph.flow)body.append(detail('Workflow outcome evidence',graph.flow.evidence));
+ const outgoing=graph.edges.filter(e=>e.from===id);if(outgoing.length){const branches=html('div');for(const e of outgoing){const target=graph.nodes.find(x=>x.id===e.to),b=html('button',`${e.label||'Continue'} → ${target.title}`,'next-link');b.onclick=()=>inspect(e.to);branches.append(b);}body.append(detail('Connected next steps',branches));}
+ if(graph.flow)body.append(detail('Integration entry point',graph.flow.entrypoint));
+ body.append(html('div','Proposed wiring from the catalogue. Selecting or moving nodes does not change or run the software.','inspector-note'));
+ render();
 }
-function field(label,value) { const d = text('div',''); d.append(text('b',label),document.createTextNode(value)); return d; }
-function show() {
-  list(); $('flow-category').textContent = `${flow.category} / ${flow.id} / version ${flow.version}`;
-  $('flow-title').textContent = flow.title; $('flow-status').textContent = flow.implementation;
-  $('implementation').textContent = STATUS_LEGEND[flow.implementation];
-  $('contract').replaceChildren(field('Executor',flow.executor),field('Side effect',flow.effect === 'write' ? 'External or state-changing action: bound approval required' : 'Read/local intent: not a browser security guarantee'),field('Expected evidence',flow.evidence),field('Entry point / dependency',flow.entrypoint));
-  $('graph').replaceChildren();
-  flow.steps.forEach((s,i) => {
-    const b = text('button','',`node${s.id === stepId ? ' active' : ''}`); b.append(text('span',String(i+1).padStart(2,'0'),'number'),text('strong',s.title),text('small',s.owner));
-    b.onclick = () => { stepId = s.id; show(); }; $('graph').append(b);
-  });
-  const step = flow.steps.find(s => s.id === stepId) || flow.steps[0];
-  const d = text('div','', 'details'); d.append(field('Evidence to retain',step.evidence),field('Recovery',step.recovery),field('Timeout budget',`${step.timeoutSeconds} seconds; live enforcement required by executor`),field('Attempt policy',`${step.attempts} allowed attempt(s); ${step.effect} step`));
-  $('step-detail').replaceChildren(text('h3',`Step ${flow.steps.indexOf(step)+1}: ${step.title}`),d);
-  renderRun();
-}
-function reset() { run = newRun(flow,`demo_${Date.now()}`,`demo-intent:${flow.id}:v${flow.version}`); $('error').textContent = ''; }
-function act(event) { try { run = transition(run,event); $('error').textContent = ''; } catch (e) { $('error').textContent = e.message; } renderRun(); }
-function advance() {
-  const actions = { received: { type:'validate' }, validated: { type:'plan' }, ready: { type:'dispatch' }, dispatching: { type:'accepted',remoteId:'demo_remote_run' }, running: { type:'executor_completed' }, verifying: { type:'verified',passed:true,evidenceRefs:['demo:independent-receipt'] } };
-  if (actions[run.state]) act(actions[run.state]);
-}
-function renderRun() {
-  $('run-state').textContent = run.state.toUpperCase().replaceAll('_',' ');
-  const controls = allowedControls(run);
-  $('advance').disabled = !controls.includes('advance'); $('approve').disabled = !controls.includes('approve'); $('retry').disabled = !controls.includes('retry');
-  $('cancel').disabled = !controls.includes('cancel'); $('confirm-cancel').disabled = !controls.includes('confirm-cancellation');
-  $('inject').disabled = ['succeeded','failed','cancelled'].includes(run.state);
-  $('reconcile-applied').disabled = run.state !== 'outcome_unknown'; $('reconcile-not').disabled = run.state !== 'outcome_unknown';
-  const failure = FAILURES[run.failure];
-  $('recovery').textContent = run.state === 'outcome_unknown' ? 'STOP: the external action may already have happened. Inspect its receipt or destination state. Automatic retry is deliberately disabled here.' : failure ? `Owner: ${failure.owner}. ${failure.fix}` : `Intent: ${run.intentHash}. Attempts: ${run.attempts}/${run.maxAttempts}. A completed executor still needs verification.`;
-  $('trace').replaceChildren(...run.events.map(e => { const d = text('div','', 'event'); d.append(text('span',String(e.seq).padStart(2,'0')),text('span',e.type),text('span',`${e.from} → ${e.to}`)); return d; }));
-  if (!run.events.length) $('trace').append(text('p','No events yet. Advance the state or inject a failure.','muted'));
-}
-$('search').oninput = list; $('category').onchange = list; $('advance').onclick = advance;
-$('approve').onclick = () => act({ type:'approve',actor:'demo-owner',intentHash:run.intentHash,expiresAt:Date.now()+60000 });
-$('retry').onclick = () => act({ type:'retry',safeToRepeat:true }); $('cancel').onclick = () => act({ type:'cancel' });
-$('confirm-cancel').onclick = () => act({ type:'cancel_confirmed',evidenceRefs:['demo:remote-cancel-receipt'] });
-$('inject').onclick = () => act({ type:'fault',code:$('fault').value });
-$('reconcile-applied').onclick = () => act({ type:'reconcile',actor:'demo-operator',outcome:'applied',evidenceRefs:['demo:external-lookup'] });
-$('reconcile-not').onclick = () => act({ type:'reconcile',actor:'demo-operator',outcome:'not_applied',evidenceRefs:['demo:external-lookup'] });
-$('reset').onclick = () => { reset(); renderRun(); };
-$('export').onclick = () => {
-  const blob = new Blob([JSON.stringify({ mode:'simulation-only',catalogueVersion:VERSION,workflow:flow,run },null,2)],{type:'application/json'});
-  const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = `rehearsal-${flow.id}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url),500);
-};
-$('refresh').onclick = async () => {
-  $('live-data').textContent = '';
-  if (location.protocol === 'file:') { $('live-status').textContent = 'Offline preview. Open this board through the authenticated Bops server to observe real sessions.'; return; }
-  try {
-    const response = await fetch('/api/workforce/status',{credentials:'same-origin',cache:'no-store',redirect:'error',signal:AbortSignal.timeout(10000)});
-    if (!response.ok) throw new Error(`Unavailable or not authenticated (${response.status})`);
-    const s = await response.json(); if (s.mode !== 'observed-bops-state') throw new Error('Snapshot contract mismatch');
-    $('live-status').textContent = `Observed at ${s.observedAt}. ${s.coverage}`;
-    $('live-data').textContent = JSON.stringify(s,null,2);
-  } catch (e) { $('live-status').textContent = `${e.message}. No live status is inferred.`; }
-};
-for (const [title,status,detail] of [
-  ['Contracts + rehearsal','AVAILABLE','32 mapped workflows. Inspect each step and rehearse failure handling without external effects.'],
-  ['Existing Bops private core','PREVIOUS CI EVIDENCE','The base commit has recorded app, Docker and egress tests. This is not a current customer deployment.'],
-  ['Trigger deployment','NOT ACTIVATED','Pinned SDK task scaffold. One scheduler owner per recipe; migrate schedules deliberately.'],
-  ['Skyvern deployment','NOT ACTIVATED','Self-hosted HTTP adapter. Model/vision, cancellation, approval and egress must pass together.'],
-  ['Business connectors','NOT ACTIVATED','CRM, email, accounting and portal recipes need customer-scoped credentials and evidence verifiers.'],
-  ['Customer release','BLOCKED UNTIL VERIFIED','Run restart, uncertain-write, cancellation, permissions, backup and live-provider acceptance on the target server.'],
-]) { const d = text('div','', 'gate'); d.append(text('strong',title),text('em',status),text('p',detail)); $('gates').append(d); }
-reset(); show();
+function scope(){selected=null;$('inspector').hidden=false;$('inspector-kicker').textContent='SCOPE & SOURCE';$('inspector-title').textContent=graph.title;const body=$('inspector-body');body.replaceChildren(detail('Diagram status',graph.mode));if(graph.flow){body.append(detail('Existing component status',STATUS_LEGEND[graph.flow.implementation]),detail('Expected result',graph.flow.evidence),detail('Source entry point',graph.flow.entrypoint));}
+ const link=html('a','View the source catalogue');link.href='https://github.com/ErnestaLabs/bops/blob/f83c10adc3a742df9bbb53e080c12db36d2a1b63/public/workforce-map/catalogue.mjs';link.target='_blank';link.rel='noopener noreferrer';body.append(detail('Basis',link),detail('Added in this revision','Flow-specific steps and decision connections are authored design detail, not an automatically discovered execution graph.'));
+ const button=html('button','Read actual Bops state','secondary');button.id='refresh-live';button.onclick=async()=>{button.disabled=true;const output=html('div',undefined,'detail');body.append(output);try{if(location.protocol==='file:')throw new Error('Offline file: no live connection');const r=await fetch('/api/workforce/status',{credentials:'same-origin',cache:'no-store',redirect:'error',signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error(`Not connected (${r.status})`);const data=await r.json();if(data.mode!=='observed-bops-state')throw new Error('Unexpected status response');output.textContent=`Observed ${data.observedAt}: ${JSON.stringify(data.counts)}. ${data.coverage}`;}catch(e){output.textContent=`${e.message}. No live execution is inferred.`;}finally{button.disabled=false;}};body.append(button);render();}
+function list(){const q=$('search').value.toLowerCase();$('flows').replaceChildren();let category='';for(const f of FLOWS.filter(f=>`${f.title} ${f.id} ${f.category}`.toLowerCase().includes(q))){if(f.category!==category){category=f.category;$('flows').append(html('div',category,'group-label'));}const b=html('button',f.title,`flow-link${graph?.id===f.id?' active':''}`);b.dataset.flow=f.id;b.onclick=()=>load(f.id);$('flows').append(b);} }
+function load(id){if(graph)layouts.set(graph.id,graph.nodes.map(n=>({id:n.id,x:n.x,y:n.y})));graph=id==='system'?systemGraph():workflowGraph(id);validateGraph(graph);for(const saved of layouts.get(id)||[]){const n=graph.nodes.find(x=>x.id===saved.id);if(n)Object.assign(n,saved);}selected=null;pathId='all';pathStep=-1;$('inspector').hidden=true;$('title').textContent=graph.title;$('category').textContent=`${graph.category} / ${id==='system'?'Component connections':'Workflow design'}`;$('path').replaceChildren();const option=html('option','All branches');option.value='all';$('path').append(option);for(const p of graph.paths){const o=html('option',p.label);o.value=p.id;$('path').append(o);}$('next').disabled=true;$('trace-label').textContent='Select a node to inspect it.';list();$('flows').querySelector('.active')?.scrollIntoView({block:'nearest'});render();requestAnimationFrame(fit);if(innerWidth<760)document.body.classList.remove('mobile-sidebar');try{history.replaceState(null,'',`#${id}`);}catch{} }
+function setPath(id){pathId=id;pathStep=-1;const route=graph.paths.find(p=>p.id===id);$('next').disabled=!route;$('trace-label').textContent=route?'Illustrative route, not a run.':'Select a node to inspect it.';render();}
+$('path').onchange=e=>setPath(e.target.value);
+$('next').onclick=()=>{const route=graph.paths.find(p=>p.id===pathId);if(!route)return;pathStep=(pathStep+1)%route.nodes.length;const n=graph.nodes.find(n=>n.id===route.nodes[pathStep]);$('trace-label').textContent=`${pathStep+1}/${route.nodes.length} · ${n.title}`;render();};
+$('search').oninput=list;$('fit').onclick=fit;$('plus').onclick=()=>zoom(1.2);$('minus').onclick=()=>zoom(1/1.2);$('zoom').onclick=()=>zoom(1/camera.k);$('system').onclick=()=>load('system');$('info').onclick=scope;$('close').onclick=()=>{$('inspector').hidden=true;selected=null;render();};$('exceptions').onchange=()=>{setPath('all');$('path').value='all';render();fit();};
+$('menu').onclick=()=>{document.body.classList.toggle(innerWidth<760?'mobile-sidebar':'hide-sidebar');requestAnimationFrame(fit);};
+$('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();}catch{toast('Fullscreen is not available in this viewer. Open the HTML in a browser tab.');}};
+const canvas=$('canvas');canvas.addEventListener('wheel',e=>{if(e.target.closest('#inspector'))return;e.preventDefault();const r=canvas.getBoundingClientRect();zoom(Math.exp(-e.deltaY*.0015),e.clientX-r.left,e.clientY-r.top);},{passive:false});
+canvas.addEventListener('pointerdown',e=>{if(e.button!==0||e.target.closest('#inspector')||e.target.closest('.minimap-wrap'))return;const node=e.target.closest('[data-node]');dragged=false;pointer={id:e.pointerId,startX:e.clientX,startY:e.clientY,x:e.clientX,y:e.clientY,node:node?.dataset.node};canvas.setPointerCapture(e.pointerId);if(!node)canvas.classList.add('panning');});
+canvas.addEventListener('pointermove',e=>{if(!pointer||pointer.id!==e.pointerId)return;const dx=e.clientX-pointer.x,dy=e.clientY-pointer.y;pointer.x=e.clientX;pointer.y=e.clientY;if(Math.hypot(e.clientX-pointer.startX,e.clientY-pointer.startY)>3)dragged=true;if(!dragged)return;if(pointer.node){const n=graph.nodes.find(n=>n.id===pointer.node);n.x+=dx/camera.k;n.y+=dy/camera.k;render();}else{camera.x+=dx;camera.y+=dy;transform();}});
+canvas.addEventListener('pointerup',e=>{if(!pointer||pointer.id!==e.pointerId)return;const node=pointer.node;pointer=null;canvas.classList.remove('panning');canvas.releasePointerCapture(e.pointerId);if(node&&!dragged){const target=graph.nodes.find(n=>n.id===node),at=performance.now();if(target?.open&&lastTap.id===node&&lastTap.graph===graph.id&&at-lastTap.at<450){lastTap={};load(target.open);}else{lastTap={id:node,graph:graph.id,at};inspect(node);}}setTimeout(()=>{dragged=false;},50);});
+canvas.addEventListener('pointercancel',()=>{pointer=null;canvas.classList.remove('panning');});
+$('minimap').addEventListener('pointerdown',e=>{e.stopPropagation();const svg=$('minimap'),pt=svg.createSVGPoint();pt.x=e.clientX;pt.y=e.clientY;const pos=pt.matrixTransform(svg.getScreenCTM().inverse()),r=canvas.getBoundingClientRect();camera.x=r.width/2-pos.x*camera.k;camera.y=r.height/2-pos.y*camera.k;transform();});
+document.addEventListener('keydown',e=>{if(['INPUT','SELECT','TEXTAREA'].includes(e.target.tagName))return;if(e.key.toLowerCase()==='f'){e.preventDefault();fit();}if(e.key==='Escape'){$('inspector').hidden=true;selected=null;render();}if(e.key==='+'||e.key==='=')zoom(1.2);if(e.key==='-')zoom(1/1.2);});
+new ResizeObserver(()=>{if(graph)fit();}).observe(canvas);
+function exportSvg(){const b=graphBounds(),svg=el('svg',{xmlns:NS,width:b.w+50,height:b.h+80,viewBox:`${b.x-25} ${b.y-40} ${b.w+50} ${b.h+80}`});svg.append(el('rect',{x:b.x-25,y:b.y-40,width:b.w+50,height:b.h+80,fill:'#f6f8fb'}));svg.append($('diagram').querySelector('defs').cloneNode(true));const style=el('style',{},'.node-shape{fill:white;stroke:#cbd5e3;stroke-width:1.25}.node.decision .node-shape{fill:#fff8e7;stroke:#d8b873}.node.failure .node-shape,.node.stop .node-shape{fill:#fff0f0;stroke:#d89090}.node.approval .node-shape{fill:#f5f0ff;stroke:#b7a0d5}.node.end .node-shape{fill:#edf7f2;stroke:#8eb8a5}.node-title{font:600 13px system-ui;fill:#2b3b52}.node-owner,.lane-label{font:10px system-ui;fill:#8190a5}.node-port{fill:white;stroke:#9aaecb}.edge-line{fill:none;stroke:#526a91;stroke-width:1.7}.edge.exception .edge-line{stroke:#c75454;stroke-dasharray:6 4}.edge.recovery .edge-line{stroke:#7e69af;stroke-dasharray:4 3}.edge-label rect{fill:#f6f8fb;stroke:#e1e5ed;stroke-width:.7}.edge-label text{font:10px system-ui;fill:#62718a}.dim{opacity:.18}');svg.append(style);svg.append(el('text',{x:40,y:b.y-13,style:'font:600 17px system-ui;fill:#263247'},`${graph.title} — design diagram, not live execution`));const world=$('world').cloneNode(true);world.removeAttribute('transform');svg.append(world);const blob=new Blob([new XMLSerializer().serializeToString(svg)],{type:'image/svg+xml'}),url=URL.createObjectURL(blob),a=html('a');a.href=url;a.download=`ernesta-${graph.id}-workflow.svg`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Diagram exported as a scalable SVG.');}
+$('export').onclick=exportSvg;
+const requested=location.hash.slice(1);load(requested==='system'||FLOWS.some(f=>f.id===requested)?requested:'send-approved');
+// Read-only test access: no live executor or secret is attached to this page.
+Object.defineProperty(window,'workflowCanvas',{value:{getGraph:()=>structuredClone(graph),getCamera:()=>({...camera}),select:load,fit},writable:false});
