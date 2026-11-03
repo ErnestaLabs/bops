@@ -138,10 +138,14 @@ export function systemGraph() {
  {id:'computer',...S('Files and local tools','Private Docker'),x:1000,y:460,open:'delegate'},
  {id:'verify',...D('Outcome verified?','Evidence verifier'),x:1270,y:265,open:'reconcile'},
  {id:'report',...E('Return result + evidence'),x:1500,y:265},
+ {id:'evidence',...S('Redacted run evidence','Evidence archive'),x:1270,y:70,open:'audit'},
+ {id:'improve',...S('Propose / probe / compose','Harness²'),x:1500,y:70,open:'repair'},
+ {id:'candidate',...D('Candidate passes CI + review?','Harness review'),x:1730,y:70,open:'repair'},
  {id:'blocked',...S('Stop for owner / repair','Human operator','stop'),x:730,y:530,open:'repair'},
  {id:'unknown',...S('Reconcile before retry','Action ledger','failure'),x:1270,y:530,open:'reconcile'},
  ].map(n=>({...n,w:184,h:90,origin:'Architecture proposal',detail:'Double-click to open the associated workflow. This is a design relationship, not proof of a deployed integration.'}));
  const edges=[];[['owner','chief'],['chief','queue'],['queue','gate'],['gate','browser'],['gate','api'],['gate','computer'],['browser','verify'],['api','verify'],['computer','verify'],['verify','report']].forEach(([a,b])=>connect(edges,a,b,a==='gate'?'Allowed':a==='verify'?'Verified':''));
+ connect(edges,'verify','evidence','Redacted evidence','normal');connect(edges,'evidence','improve','Offline improvement','normal');connect(edges,'improve','candidate','Candidate harness','normal');connect(edges,'candidate','chief','Adopt for future runs only','recovery',{viaY:20,fromPort:'top',toPort:'top'});
  connect(edges,'gate','blocked','No','exception');connect(edges,'verify','unknown','Mismatch / uncertain','exception');connect(edges,'unknown','verify','Evidence found','recovery',{viaX:1485,fromPort:'right',toPort:'right'});
  return {id:'system',title:'How the workforce connects',category:'Architecture',nodes,edges,paths:[],mode:'Architecture proposal · services not implied live'};
 }
