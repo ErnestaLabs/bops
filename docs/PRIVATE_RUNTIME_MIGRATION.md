@@ -1,8 +1,10 @@
 # Ernesta customer-owned runtime
 
 This is the private server path in the existing Bops application, not a separate demo.
-Use the `private:*` commands below. The upstream Mac download, setup script and plain
-`npm start` are **not** the private launcher and retain upstream behavior.
+The default `npm run setup`, `npm run build`, `npm start` and `npm run dev`
+commands now select the private path. The `private:*` aliases remain available.
+The upstream Mac download, desktop scripts and explicitly named `upstream:*`
+commands are **not** the private deployment path.
 
 ## Supported core path
 
@@ -29,9 +31,13 @@ Run one Bops server per data directory. Do not point two instances at the same f
 git switch feat/private-provider-foundation
 ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
 docker build -f private-runtime/worker/Dockerfile -t ernesta-bops-worker:private .
-cp private-runtime/private.env.example .env.private
-chmod 600 .env.private
+npm run setup
 ```
+
+Setup creates `.env.private` with mode 0600 and a persistent home-directory data
+path. Existing files remain untouched. It does not install software, provision
+networks or start a process. Set `BOPS_PRIVATE_ENV_FILE` before setup for a different
+destination; its parent directory must already exist.
 
 Edit `.env.private` **on the server**, never in chat or Git. Set:
 
@@ -55,13 +61,21 @@ npm run private:check
 # Explicit opt-in: two small synthetic provider requests, potentially billable.
 # No customer data, conversation storage or actual tool execution.
 npm run private:check -- --live
+# Optional extra synthetic requests: SSE framing and image recognition.
+npm run private:check -- --live --stream --vision
 npm run private:test
 NODE_OPTIONS=--max-old-space-size=4096 npm run private:build
 npm run private:start
 ```
 
 A successful local preflight is not a live-provider or internet-connectivity certificate.
-`--live` checks text plus a harmless forced function call. It never switches providers.
+`--live` checks text plus a harmless forced function call. `--stream` adds one SSE
+request and refuses to pass buffered output as streaming. `--vision` adds one request
+with a newly randomized six-color PNG and checks its recognized order. Neither optional
+probe runs without `--live`. No real screenshots, customer files or stored conversations
+are sent, and no returned tool is executed. All probes may incur provider charges.
+Passing these narrow checks does not certify general visual accuracy, latency or safe
+autonomous operation. A failed probe is reported independently. It never switches providers.
 Provider errors are reported without printing credentials or provider response bodies.
 
 Open `http://127.0.0.1:3210/api/private-login` on that server. From a different computer,
