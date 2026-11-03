@@ -34,6 +34,8 @@ jobs:
         run: docker build -f private-runtime/worker/Dockerfile -t ernesta-bops-worker:private .
       - name: Real worker acceptance (no network, no AI keys)
         run: node private-runtime/docker-smoke.mjs
+      - name: Real public web access through isolated self-hosted proxy
+        run: node private-runtime/egress-smoke.mjs
       - name: Application dependencies
         run: npm ci
       - name: Runtime dependency audit gate

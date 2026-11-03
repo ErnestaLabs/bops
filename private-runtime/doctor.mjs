@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { privateClient } from './inference.mjs';
 import { visionProbe } from './probes.mjs';
+import { proxyTopology } from './egress/client.mjs';
 
 export async function preflight({ env = process.env, exec = execFileSync, fetchImpl = fetch, live = false, requireWeb = false, stream = false, vision = false, root = resolve(import.meta.dirname, '..') } = {}) {
   const checks = [];
@@ -26,7 +27,10 @@ export async function preflight({ env = process.env, exec = execFileSync, fetchI
   try { run(['image', 'inspect', env.BOPS_WORKER_IMAGE || 'ernesta-bops-worker:private']); add('worker image', true, 'Customer-owned worker image is installed.'); }
   catch { add('worker image', false, 'Build private-runtime/worker/Dockerfile before launching.'); }
   const network = env.BOPS_WORKER_NETWORK || 'none';
-  if (network === 'none') add('worker network', !requireWeb, 'Workers are offline. Web tasks require an owner-approved egress-controlled Docker network.');
+  if (env.BOPS_WORKER_PROXY) {
+    try { await proxyTopology(env, run); add('worker network', true, 'Healthy self-hosted proxy on an isolated internal network. Exact-host policy applies; external reachability is not yet verified.'); }
+    catch { add('worker network', false, 'Private egress topology is invalid or its proxy is not healthy. No worker was provisioned.'); }
+  } else if (network === 'none') add('worker network', !requireWeb, 'Workers are offline. Web tasks require an owner-approved egress-controlled Docker network.');
   else if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(network) || ['host', 'container'].includes(network)) add('worker network', false, 'Host/shared-container networking is forbidden.');
   else {
     try {

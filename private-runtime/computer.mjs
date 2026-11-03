@@ -3,6 +3,7 @@
  */
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { proxyTopology } from './egress/client.mjs';
 const ID = /^ernesta-[a-f0-9]{24}$/;
 const DISPLAYS = [99, 100, 101, 102];
 export class ComputerError extends Error {
@@ -44,11 +45,16 @@ export function dockerComputer({ env = process.env, exec = run } = {}) {
       if (!/^[a-zA-Z0-9][a-zA-Z0-9._/:@-]*$/.test(image)) fail('Invalid worker image.', 'invalid_configuration', 503);
       const network = env.BOPS_WORKER_NETWORK || 'none';
       if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(network) || ['host', 'container'].includes(network)) fail('Host/shared-container networking is forbidden.', 'invalid_configuration', 503);
+      let proxy;
+      try { proxy = await proxyTopology(env, exec); }
+      catch { fail('Private web egress is not ready. Run the egress preflight.', 'invalid_egress', 503); }
+      const proxyArgs = proxy ? ['--dns', '127.0.0.1', ...['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'BOPS_WORKER_PROXY'].flatMap(key => ['--env', `${key}=${proxy.url}`]),
+        '--env', 'NO_PROXY=localhost,127.0.0.1,::1', '--env', 'no_proxy=localhost,127.0.0.1,::1'] : [];
       const cpus = number(env.BOPS_WORKER_CPUS, 2, 0.5, 16, 'CPU limit');
       const memory = number(env.BOPS_WORKER_MEMORY_GB ?? ram, 4, 1, 64, 'memory limit');
       const id = `ernesta-${randomBytes(12).toString('hex')}`;
       await exec(['run', '-d', '--name', id, '--label', 'ernesta.managed=true', '--label', label(), '--label', `ernesta.workspace=${String(wsId).slice(0, 100)}`, '--label', `ernesta.name=${String(name).slice(0, 100)}`,
-        '--network', network, '--cpus', String(cpus), '--memory', `${memory}g`, '--memory-swap', `${memory}g`, '--pids-limit', '512', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--init', '--shm-size', '512m',
+        '--network', network, ...proxyArgs, '--cpus', String(cpus), '--memory', `${memory}g`, '--memory-swap', `${memory}g`, '--pids-limit', '512', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--init', '--shm-size', '512m',
         '--mount', `type=volume,src=${id}-work,dst=/workspace`, '--mount', `type=volume,src=${id}-home,dst=/root`, image], { timeout: 180000 });
       made.add(id); changes++;
       return { id, name: String(name), status: 'starting' };

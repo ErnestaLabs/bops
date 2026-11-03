@@ -2,6 +2,11 @@
 set -euo pipefail
 N="${1:?display required}"
 case "$N" in 99|100|101|102) ;; *) exit 2 ;; esac
+PROXY_ARGS=()
+if [[ -n "${BOPS_WORKER_PROXY:-}" ]]; then
+  [[ "$BOPS_WORKER_PROXY" == "http://bops-egress:3128" ]] || { echo 'Invalid private proxy configuration' >&2; exit 2; }
+  PROXY_ARGS=(--proxy-server="$BOPS_WORKER_PROXY" --proxy-bypass-list='localhost;127.0.0.1;[::1]' --disable-quic)
+fi
 PORT=$((9200 + N))
 if curl -fsS --max-time 1 "http://127.0.0.1:$PORT/json/version" >/dev/null; then exit 0; fi
 PROFILE="/root/profiles/s$N"
@@ -11,5 +16,5 @@ rm -f "$PROFILE/SingletonLock" "$PROFILE/SingletonCookie" "$PROFILE/SingletonSoc
 DISPLAY=":$N" nohup chromium --no-sandbox --disable-dev-shm-usage \
   --no-first-run --no-default-browser-check --disable-background-networking \
   --remote-debugging-address=127.0.0.1 --remote-debugging-port="$PORT" \
-  --user-data-dir="$PROFILE" --start-maximized "${2:-about:blank}" \
+  --user-data-dir="$PROFILE" "${PROXY_ARGS[@]}" --start-maximized "${2:-about:blank}" \
   >"/var/log/bops/chrome-$N.log" 2>&1 </dev/null &
