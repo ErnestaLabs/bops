@@ -1,0 +1,59 @@
+name: Workflow scaffold
+on:
+  pull_request:
+  push:
+    branches: [feat/private-provider-foundation]
+permissions:
+  contents: read
+jobs:
+  orchestration-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: workflow_contract_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Contract, adapter and authenticated map tests
+        run: node --test private-runtime/test/orchestration.test.mjs
+      - name: Install pinned Trigger SDK package
+        working-directory: integrations/trigger
+        run: npm install --ignore-scripts --no-fund --no-audit
+      - name: Native Trigger task typecheck
+        working-directory: integrations/trigger
+        run: npm run check
+      - name: Real Postgres dispatch and replay tests
+        working-directory: integrations/trigger
+        run: node --test test/ledger.test.mjs
+        env:
+          ERNESTA_LEDGER_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/workflow_contract_test
+      - name: Install browser for authenticated map acceptance
+        working-directory: integrations/trigger
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Real browser map acceptance
+        working-directory: integrations/trigger
+        run: node --test test/map-browser.test.mjs
+      - name: Export exact catalog visual
+        run: node private-runtime/workflows/export-map.mjs "$RUNNER_TEMP/workforce-map.html"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: workflow-scaffold-evidence
+          path: |
+            integrations/trigger/package-lock.json
+            integrations/trigger/.scratch/workflow-map.png
+            ${{ runner.temp }}/workforce-map.html
+          retention-days: 3
