@@ -1,4 +1,4 @@
-# Workforce control map: Bops + Trigger.dev + Skyvern
+# Workforce control map: Bops + Trigger.dev + Skyvern + Harness²
 
 ## Open the scaffold now
 
@@ -47,7 +47,9 @@ Nothing in the simulator performs an external action.
 
 Bops keeps its owner interface, Chief/specialist roles and existing private computer
 runtime. Trigger owns top-level scheduling and queued attempts after a deliberate
-migration. Skyvern executes bounded browser jobs. Do not turn on Trigger cron for a
+migration. Skyvern executes bounded browser jobs. Harness² runs outside the live
+execution path as the improvement lab: redacted evidence → propose/probe/compose →
+candidate harness → CI/review → a new immutable harness version for future runs. Do not turn on Trigger cron for a
 recipe while the same Bops routine remains active. Do not rebuild their schedulers.
 
 Trigger workers must not import Bops' in-memory store or concurrently write its state
@@ -176,3 +178,23 @@ The inspected Skyvern LICENSE is AGPL-3.0; Trigger's is Apache-2.0. Keep each se
 license, notices and applicable source obligations. This adapter does not copy Skyvern
 implementation code or change the existing Bops FSL license. Separate processes are
 an architectural boundary, not a legal guarantee about license compatibility.
+
+
+## Harness² improvement lab
+
+`integrations/harness2` scaffolds Google Research Harness² 0.1.0 as an optional
+offline improvement container. It does not sit between Trigger and executors, and it
+cannot modify a running agent. The policy file permits the eight upstream harness
+components (system prompt, guardrails, memory, tool guidance, subagents, skills,
+scripts and plugins) but requires candidate diffs, probe evidence, workflow/security
+tests and human review before adoption.
+
+The evidence exporter deliberately strips prompts, credentials, raw browser content,
+cookies, screenshots and provider bodies. Treat its output as an improvement signal,
+not a source of truth about a business outcome. Harness² upstream currently documents
+unrestricted executor web access and Codex without its sandbox for experiments; do not
+copy those defaults into customer deployments. Production evaluation must use the
+same controlled network policy as the rest of the workforce.
+
+Harness² is Apache-2.0 and is not an officially supported Google product. Keep its
+license and third-party notices when redistributing it.
