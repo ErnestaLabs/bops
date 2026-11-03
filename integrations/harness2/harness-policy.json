@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "mode": "offline-improvement-only",
+  "editableComponents": [
+    "system_prompt",
+    "guardrails",
+    "memory",
+    "tool_guidance",
+    "subagents",
+    "skills",
+    "scripts",
+    "plugins"
+  ],
+  "forbiddenInputs": [
+    "credentials",
+    "api_keys",
+    "session_cookies",
+    "raw_customer_secrets"
+  ],
+  "adoption": {
+    "automatic": false,
+    "requires": [
+      "candidate_diff",
+      "probe_evidence",
+      "workflow_tests",
+      "security_tests",
+      "human_review"
+    ],
+    "appliesTo": "future_runs_only"
+  },
+  "writeSafety": {
+    "unsettledExternalActions": "never replay",
+    "uncertainOutcomes": "reconcile before any retry"
+  },
+  "network": {
+    "default": "disabled",
+    "productionEvaluation": "allowlisted-only"
+  }
+}
