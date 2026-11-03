@@ -23,7 +23,8 @@ export function allowHosts(value) {
   return new Set(hosts);
 }
 export function publicIPv4(address) {
-  if (isIP(address) !== 4) return false;
+  // Azure's WireServer is a virtual platform endpoint despite its public-looking IP.
+  if (isIP(address) !== 4 || address === '168.63.129.16') return false;
   const [a, b, c] = address.split('.').map(Number);
   // Non-global special-purpose blocks. Includes metadata/link-local, CGNAT,
   // multicast, benchmarking, documentation and deprecated relay ranges.
