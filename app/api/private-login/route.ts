@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { loopbackAuthority } from "@/private-runtime/request-origin.mjs";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const headers = { "Cache-Control": "no-store", "X-Frame-Options": "DENY", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'" };
@@ -11,10 +12,9 @@ export function GET() {
 }
 export async function POST(request: Request) {
   if (!active()) return new Response("Private login is not enabled.", { status: 404, headers });
-  const url = new URL(request.url);
-  if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) return new Response("Loopback only.", { status: 403, headers });
-  const origin = request.headers.get("origin");
-  if (origin && origin !== url.origin) return new Response("Invalid origin.", { status: 403, headers });
+  // Use the browser's validated loopback authority, not Next's internal URL.
+  try { loopbackAuthority(request.headers.get("host"), request.headers.get("origin")); }
+  catch { return new Response("Invalid host or origin.", { status: 403, headers }); }
   if (Date.now() - windowStart > 60000) { attempts = 0; windowStart = Date.now(); }
   if (++attempts > 10) return new Response("Try again later.", { status: 429, headers: { ...headers, "Retry-After": "60" } });
   const reader = request.body?.getReader();
@@ -33,5 +33,5 @@ export async function POST(request: Request) {
   const a = Buffer.from(given), b = Buffer.from(want);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return new Response("Invalid token.", { status: 401, headers });
   attempts = 0;
-  return new Response(null, { status: 303, headers: { ...headers, Location: "/", "Set-Cookie": `bops_window=${encodeURIComponent(want)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${url.protocol === "https:" ? "; Secure" : ""}` } });
+  return new Response(null, { status: 303, headers: { ...headers, Location: "/", "Set-Cookie": `bops_window=${encodeURIComponent(want)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800` } });
 }
