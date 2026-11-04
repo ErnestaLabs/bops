@@ -6,7 +6,10 @@
   "scripts": {
     "check": "tsc --noEmit",
     "dev": "trigger.dev dev",
-    "deploy": "trigger.dev deploy"
+    "deploy": "trigger.dev deploy",
+    "slice:standin": "node ../../private-runtime/workflows/slice.mjs --stand-in",
+    "slice:standin:lost": "node ../../private-runtime/workflows/slice.mjs --stand-in --lose-response",
+    "slice:live": "node ../../private-runtime/workflows/slice.mjs"
   },
   "dependencies": {
     "@trigger.dev/sdk": "4.8.3",
