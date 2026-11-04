@@ -5,6 +5,12 @@ import { approvalEnv, skyvernEnv } from './env.mjs';
 import { triggerTask } from './trigger-client.mjs';
 const TASK_ID='ernesta-approved-browser-workflow';
 const obj=value=>value&&typeof value==='object'&&!Array.isArray(value);
+const SECRET_KEY=/(?:password|passwd|secret|token|cookie|authorization|api[_-]?key|private[_-]?key)/i;
+function rejectSecrets(value,path='parameters'){
+  if(Array.isArray(value)){for(let i=0;i<value.length;i++)rejectSecrets(value[i],`${path}[${i}]`);return;}
+  if(!obj(value))return;
+  for(const [k,v] of Object.entries(value)){if(SECRET_KEY.test(k))throw new WorkflowError('workflow_parameter_secret_forbidden');rejectSecrets(v,`${path}.${k}`);}
+}
 const text=(value,max=256)=>typeof value==='string'&&value.trim()&&value.length<=max;
 export const CANONICAL_WORKFLOW_IDS=Object.freeze(canonicalCatalog.workflows.map(w=>w.id));
 export function triggerConfigured(env=process.env){return !!(env.TRIGGER_API_URL&&env.TRIGGER_SECRET_KEY&&env.BOPS_PRIVATE_INSTALL_ID);}
@@ -14,6 +20,7 @@ export function workflowDispatchPlan(args,env=process.env){
   const {canonicalWorkflowId,executorWorkflowId,objectId,operation,parameters}=args;
   const workflow=canonicalWorkflow(canonicalWorkflowId);
   if(!text(executorWorkflowId,160)||!text(objectId)||!text(operation)||!obj(parameters))throw new WorkflowError('workflow_dispatch_invalid');
+  rejectSecrets(parameters);
   const {allowedWorkflowIds}=skyvernEnv(env);if(!allowedWorkflowIds.includes(executorWorkflowId))throw new WorkflowError('executor_workflow_not_allowed');
   const installationId=env.BOPS_PRIVATE_INSTALL_ID;if(!text(installationId,256))throw new WorkflowError('installation_id_missing');
   const actionKey=actionIdentity({installationId,workflowId:workflow.id,version:workflow.version,objectId,operation});
