@@ -19,6 +19,7 @@
     "private:start": "node private-runtime/start.mjs start",
     "private:dev": "node private-runtime/start.mjs dev",
     "private:test": "node --test private-runtime/test/*.test.mjs",
+    "private:acceptance": "node private-runtime/workflows/acceptance.mjs",
     "private:check": "node private-runtime/doctor.mjs",
     "upstream:setup": "scripts/setup.sh",
     "upstream:dev": "next dev",

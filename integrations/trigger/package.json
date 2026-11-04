@@ -9,7 +9,9 @@
     "deploy": "trigger.dev deploy",
     "slice:standin": "node ../../private-runtime/workflows/slice.mjs --stand-in",
     "slice:standin:lost": "node ../../private-runtime/workflows/slice.mjs --stand-in --lose-response",
-    "slice:live": "node ../../private-runtime/workflows/slice.mjs"
+    "slice:live": "node ../../private-runtime/workflows/slice.mjs",
+    "acceptance:standin": "node ../../private-runtime/workflows/acceptance.mjs --stand-in",
+    "acceptance:live": "node ../../private-runtime/workflows/acceptance.mjs --live"
   },
   "dependencies": {
     "@trigger.dev/sdk": "4.8.3",

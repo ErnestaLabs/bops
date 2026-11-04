@@ -1,72 +1,122 @@
-# Acceptance: real Trigger + Skyvern
+# Acceptance: one real workflow, then the eight ways it breaks
 
-What is already proven on a machine without Docker, and the exact run that is
-left for a Docker-capable host.
+The milestone is a single run that goes owner task → Chief → Trigger → specialist
+→ executor → ledger → verifier → report → trace, and then the same run put
+through every failure that matters, proving each lands in a state an operator can
+recover from.
 
-## Proven here (no Docker required)
+`private-runtime/workflows/acceptance.mjs` is that run. It drives the production
+modules (`browser-run`, `skyvern-client`, `postgres-ledger`, `dispatch`,
+`verify`) and injects faults at the edges — the transport, the destination, the
+process — instead of mocking the path.
 
 ```bash
-# contract, ledger, dispatch and recovery suites
-node --test private-runtime/test/*.test.mjs                    # 208 pass
-cd integrations/trigger && \
-  ERNESTA_LEDGER_TEST_DATABASE_URL=postgresql://... \
-  node --test test/ledger.test.mjs test/uncertain-send.test.mjs # 6 pass
-
-# the same path the deployed task runs, over real HTTP + real Postgres
 ERNESTA_LEDGER_DATABASE_URL=postgresql://... \
-  node private-runtime/workflows/slice.mjs --stand-in            # SUCCEEDED
+  node private-runtime/workflows/acceptance.mjs --stand-in   # here
 ERNESTA_LEDGER_DATABASE_URL=postgresql://... \
-  node private-runtime/workflows/slice.mjs --stand-in --lose-response
+  node private-runtime/workflows/acceptance.mjs --live       # on the Docker host
 ```
 
-The stand-in is a local wire stand-in, not Skyvern. `--stand-in` reports
-`businessOutcomeVerified: false` and the live mode refuses a stand-in endpoint,
-so a stand-in result cannot be read as a live one.
+Exit `0` = every provable scenario passed. `1` = something failed. `2` = nothing
+failed but something could not be armed against this deployment, so the run is
+not complete either.
 
-## Remaining step
+## What each scenario asserts
 
-1. **Start the pinned services** on the Docker-capable host (customer-owned, not
-   Trigger Cloud, not Skyvern Cloud). Trigger 4.8.3 and Skyvern 1.0.56, per the
-   versions in the image tags you deploy; a Postgres for the application ledger
-   that is *separate* from Trigger's own database.
+| Scenario | Fault | Must land in | Proven by |
+| --- | --- | --- | --- |
+| `happy` | none | `SUCCEEDED` | independent read-back, one submission |
+| `lost-response` | write lands, answer discarded | `OUTCOME_UNKNOWN` → `RECONCILED` → `SUCCEEDED` | ledger row stayed `OUTCOME_UNKNOWN`; one submission |
+| `worker-dies` | `SIGKILL` between write and receipt | `SUBMITTING` row → reconciled → `SUCCEEDED` | no witness existed; the destination answered; one submission |
+| `restart-server` | `SIGKILL` after the run is recorded | resumed, never resent | row survived with `remote_id`; one submission total |
+| `duplicate-trigger` | two schedulers, same action | one submission | loser resumes or reports uncertainty, never posts again |
+| `website-changed` | run completes, output is wrong | `FAILED` at verification, repair not resend | `result_mismatch`; one submission |
+| `mfa-appears` | destination needs a human | `WAITING_APPROVAL`, then resumes | not cancelled, not resubmitted; one submission |
+| `model-fails` | inference outage mid-run | `OUTCOME_UNKNOWN` → `RECONCILING` → `FAILED` | the run exists, so it is a recorded failure |
+| `cancel-mid-run` | owner stops it | `CANCELLING` → `CANCELLED` | only after the destination confirms it stopped |
+
+Every scenario asserts the submission count from the destination side, because
+"exactly one write" is a property of the destination, not of our bookkeeping.
+
+## Already proven here (no Docker)
+
+Run on a machine with no Docker socket access and no vendor credentials:
+
+- `node --test private-runtime/test/*.test.mjs` — 213 pass.
+- `integrations/trigger`: `test/ledger.test.mjs test/uncertain-send.test.mjs`
+  against real Postgres — 6 pass.
+- `node private-runtime/workflows/acceptance.mjs --stand-in` — 9/9, exit 0.
+
+The stand-in is a local wire stand-in, not Skyvern. It marks every response
+`x-bops-stand-in: true`, and `--live` refuses to run against it, so a stand-in
+result cannot be read as a live one. In stand-in mode the summary reports
+`businessOutcomeVerified: false`.
+
+## Remaining step: the live run
+
+1. **Start the pinned services** on a customer-owned Docker host: Trigger 4.8.3,
+   Skyvern 1.0.56, and a Postgres for the application ledger that is *separate*
+   from Trigger's own database.
 
 2. **Configure secrets** from a secret store, never a file in Git:
 
    ```bash
    TRIGGER_API_URL=https://trigger.internal      # self-hosted only
    TRIGGER_PROJECT_REF=proj_...
-   TRIGGER_SECRET_KEY=...                        # in the worker/CLI environment only
+   TRIGGER_SECRET_KEY=...
    SKYVERN_API_BASE_URL=https://skyvern.internal # origin, no /v1 suffix
    SKYVERN_API_KEY=...
-   SKYVERN_ALLOWED_WORKFLOW_IDS=wpid_...         # must be pre-published in Skyvern
+   SKYVERN_ALLOWED_WORKFLOW_IDS=wpid_...         # pre-published in Skyvern
    ERNESTA_LEDGER_DATABASE_URL=postgresql://...  # application ledger
    WORKFLOW_APPROVAL_KEY=<64 hex>                # owner approval process only
    ```
 
-3. **Migrate the ledger** before enabling anything: apply
-   `private-runtime/workflows/ledger.sql` to `ERNESTA_LEDGER_DATABASE_URL`.
-   Without it a task aborts on purpose rather than writing without durable intent.
+3. **Migrate the ledger** first: apply `private-runtime/workflows/ledger.sql` to
+   `ERNESTA_LEDGER_DATABASE_URL`. Without it a task aborts on purpose rather
+   than writing without durable intent.
 
 4. **Deploy the tasks**: `npm run deploy` in `integrations/trigger`. One config
-   (`trigger.config.ts`) covers `./src` and `./tasks`; the CLI refuses to deploy
-   against a `trigger.dev` host.
+   (`trigger.config.ts`) covers `./src` and `./tasks`; the CLI refuses a
+   `trigger.dev` host.
 
-5. **Run the real slice**:
+5. **Run the acceptance**:
 
    ```bash
-   cd integrations/trigger && npm run slice:live
+   cd integrations/trigger && npm run acceptance:live
    ```
 
-   Expected on success: `finalState: SUCCEEDED`, `businessOutcomeVerified: true`,
-   ledger events `SUBMISSION_RESERVED` then `REMOTE_ID_RECORDED`, and a run id
-   you can open in the Skyvern UI. A `result_mismatch` means Skyvern finished but
-   did not produce the fields the owner asked for — the action stays unverified.
+   Expect `happy`, `lost-response`, `restart-server`, `duplicate-trigger`,
+   `website-changed`, `cancel-mid-run` to pass, and `mfa-appears` /
+   `model-fails` to report `BLOCKED` (exit 2). Those two faults can only be armed
+   inside the vendor run; proving them live needs a real MFA-gated page and a
+   scheduled inference outage, which is a separate exercise.
 
-6. **Prove the lost-write path against the real service**: run the same action
-   with the destination reachable but its response discarded (kill the connection
-   from the proxy, or stop the worker at the POST). The expected sequence is
-   `OUTCOME_UNKNOWN` → lookup of the recorded action in Skyvern →
-   `RECONCILED`, with exactly one run created in the Skyvern UI.
+6. **Close the live lost-write case by hand.** `--live` cannot search Skyvern for
+   the action, so reconciliation needs the run id an operator found:
+
+   ```bash
+   node private-runtime/workflows/acceptance.mjs --live \
+     --scenario=lost-response --found-run-id=wr_...
+   ```
+
+   Then confirm in the Skyvern UI that exactly one run exists for that action.
+   If the deployed Skyvern version exposes run listing, `findByActionKey` belongs
+   next to `client.inspect()`; the adapter deliberately does not guess a vendor
+   search API.
+
+## Launch blockers this run does not cover
+
+These are missing from the chain, not merely unproven:
+
+- **No Agent Desktop executor.** `desktop/` is Bops' own Electron shell, not an
+  executor adapter. Nothing in the workflow runtime can hand work to a native
+  desktop app, so today the chain has exactly one executor: Skyvern.
+- **No API-connector executor.** `verifySentMessage()` is a read-back contract
+  with no sender behind it. No connector client exists.
+- **Chief is not wired to dispatch.** Chief/specialist live in `lib/server`
+  (the product); the Trigger task takes a pre-signed approval payload. "Chief
+  decides what to do" is real in Bops but is not yet the thing that creates the
+  run.
 
 ## Do not
 
@@ -74,3 +124,4 @@ so a stand-in result cannot be read as a live one.
   owns each workflow.
 - Do not resubmit an action stuck in `OUTCOME_UNKNOWN`; reconcile it. Replaying
   it is the duplicate-write bug this path exists to prevent.
+- Do not report a stand-in run, or a task's own completion, as business success.
