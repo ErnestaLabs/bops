@@ -3566,7 +3566,7 @@ async function agentTool(sessionId: string, botId: string, name: string, args: R
   }
   if (name === "queue_workflow") {
     const b = bot(botId);
-    if (!b?.isMain || outsideThread(session(sessionId), session)) return "This thread cannot queue top-level workflows.";
+    if (!b?.isMain || outsideThread(session(sessionId)!, session)) return "This thread cannot queue top-level workflows.";
     if (!opts.approved) step(sessionId, name, `proposed canonical workflow ${String(args.canonicalWorkflowId ?? "")}`);
     const result = await runWorkforceTool(args, { approved: opts.approved });
     if (opts.approved) step(sessionId, name, `queued ${String(args.canonicalWorkflowId ?? "workflow")} through Trigger`);
