@@ -57,6 +57,7 @@ import { computerOutOfCredit, freeHoursUsed, sayInUse, START_SAY_MS, wakeForUser
 import { brainById, ensureBrainTools, signInStatus } from "./brains";
 import { alsoSpec, brainName, BrainStopped, cliCompact, cliDriver, cliTurn, closeCli, closeTerminal, limitPick, openRun, openShell, openTerminal, signInWords, stoppedWords } from "./cli-agents";
 import { aiOf, hasProfile, isCli, pickAgent, threadAgent, type AgentRun } from "@/lib/agents";
+import { WORKFORCE_TOOL, runWorkforceTool, workforceToolAvailable } from "./workforce-tool";
 
 /**
  * Session runner. A session is one long-running task on one screen of the computer its bot works on
@@ -3194,6 +3195,7 @@ async function run(sessionId: string) {
               ...(macUi ? [{ type: "mcp", server_label: "mac", allowed_tools: MAC_UI_TOOLS, transport: macUiMcp(folder!), required: false }] : []),
               // Its apps and business data, answered by this Bops (agentTool): a call that needs the user's OK pauses here.
               ...[...(fnApps ? APP_TOOLS(b) : []), ...(fnData ? DATA_TOOLS(b) : [])].map((t) => ({ type: "function", name: t.name, description: t.description, parameters: t.parameters })),
+              ...(b.isMain && !outside && workforceToolAvailable() ? [WORKFORCE_TOOL] : []),
             ],
             // Orgo threads can split into helpers (subagents), each on a screen of its own; see screen_mcp.py.
             ...(mac ? {} : { multi_agent: { enabled: true, max_concurrent_subagents: MAX_HELPERS } }),
@@ -3561,6 +3563,14 @@ async function agentTool(sessionId: string, botId: string, name: string, args: R
   if (DATA_TOOL_NAMES.has(name)) {
     if (!opts.approved) step(sessionId, name, name === "business_search" ? `looked up ${String(args.job ?? "business data")}` : name === "find_data" ? `looked for "${String(args.query ?? "").slice(0, 60)}" in business data` : `got ${String(args.endpoint_id ?? "data")}`);
     return runDataTool(botId, name, args, { sessionId }, opts);
+  }
+  if (name === "queue_workflow") {
+    const b = bot(botId);
+    if (!b?.isMain || outsideThread(session(sessionId), session)) return "This thread cannot queue top-level workflows.";
+    if (!opts.approved) step(sessionId, name, `proposed canonical workflow ${String(args.canonicalWorkflowId ?? "")}`);
+    const result = await runWorkforceTool(args, { approved: opts.approved });
+    if (opts.approved) step(sessionId, name, `queued ${String(args.canonicalWorkflowId ?? "workflow")} through Trigger`);
+    return result;
   }
   return `Unknown tool ${name}.`;
 }
