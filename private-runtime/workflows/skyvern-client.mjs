@@ -1,6 +1,10 @@
 /** Explicit self-hosted Skyvern API adapter. No Cloud default, no POST retry. */
 import { WorkflowError, canonical, digest, verifyApproval } from './contracts.mjs';
-const BLOCKED = ['skyvern.com','orgo.ai','openai.com','x.ai'];
+import { dispatchWriteOnce } from './dispatch.mjs';
+// Union of both branches' deny lists: a host either branch called a vendor
+// default must not receive work. 'trigger-webapp' stays allowed because the
+// self-hosted Trigger deployment is addressed by that hostname.
+const BLOCKED = ['skyvern.com','orgo.ai','openai.com','x.ai','bops.bot'];
 export function selfHostedEndpoint(value) {
   let url; try { url = new URL(value); } catch { throw new WorkflowError('self_hosted_endpoint_required'); }
   const host = url.hostname.toLowerCase();
@@ -8,12 +12,20 @@ export function selfHostedEndpoint(value) {
   if (url.protocol === 'http:' && !['localhost','127.0.0.1','[::1]','skyvern','trigger-webapp'].includes(host)) throw new WorkflowError('https_required_for_remote_control');
   return url.href.replace(/\/+$/, '');
 }
+/** One wire truth: the configured value is the service root, and the versioned
+ * path is appended here. Callers that were configured with a trailing /v1 keep
+ * working unchanged, so neither branch's .env has to be rewritten. */
+const apiBase = value => selfHostedEndpoint(value).replace(/\/v1$/, '');
 function id(value) { if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(value)) throw new WorkflowError('invalid_remote_id'); return value; }
-function rejectSecrets(value, depth = 0) {
+/** The one credential rule for every parameter bag that can reach an executor.
+ * Both the Skyvern request builder and the Trigger dispatch plan call this, so a
+ * field rejected before approval cannot slip through the other door afterwards. */
+export const SECRET_KEY = /(password|passwd|secret|token|cookie|authorization|api[\s_-]?key|private[\s_-]?key)/i;
+export function rejectSecrets(value, depth = 0) {
   if (depth > 16) throw new WorkflowError('parameters_too_deep');
   if (!value || typeof value !== 'object') return;
   for (const [key, v] of Object.entries(value)) {
-    if (/(password|secret|authorization|api.?key|access.?token|cookie)/i.test(key)) throw new WorkflowError('use_credential_references');
+    if (SECRET_KEY.test(key)) throw new WorkflowError('use_credential_references');
     rejectSecrets(v, depth + 1);
   }
 }
@@ -36,7 +48,7 @@ export function normalizeRun(data, expectedId) {
 }
 /** @param {{baseURL?: string, apiKey?: string, fetchImpl?: typeof fetch, timeoutMs?: number}} options */
 export function skyvernClient({ baseURL, apiKey, fetchImpl = fetch, timeoutMs = 15000 } = {}) {
-  const base = selfHostedEndpoint(baseURL);
+  const base = apiBase(baseURL);
   if (typeof apiKey !== 'string' || !apiKey.trim()) throw new WorkflowError('skyvern_api_key_required');
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120000) throw new WorkflowError('invalid_timeout');
   async function request(path, body) {
@@ -55,9 +67,16 @@ export function skyvernClient({ baseURL, apiKey, fetchImpl = fetch, timeoutMs = 
     }
   }
   return {
-    async submit(requestBody) { return normalizeRun(await request('/run/workflows', requestBody)); },
-    async get(runId) { id(runId); return normalizeRun(await request(`/runs/${encodeURIComponent(runId)}`), runId); },
-    async cancel(runId) { id(runId); await request(`/runs/${encodeURIComponent(runId)}/cancel`, {}); return { remoteId: runId, businessState:'CANCELLING', businessVerified:false }; },
+    async submit(requestBody) { return normalizeRun(await request('/v1/run/workflows', requestBody)); },
+    async get(runId) { id(runId); return normalizeRun(await request(`/v1/runs/${encodeURIComponent(runId)}`), runId); },
+    async cancel(runId) { id(runId); await request(`/v1/runs/${encodeURIComponent(runId)}/cancel`, {}); return { remoteId: runId, businessState:'CANCELLING', businessVerified:false }; },
+    /** A fresh read for the verifier, deliberately NOT the normalized report:
+     * verification must not consume the executor's own summary of itself. */
+    async inspect(runId) {
+      id(runId);
+      const data = await request(`/v1/runs/${encodeURIComponent(runId)}`);
+      return { remoteId: id(data.run_id ?? data.workflow_run_id), remoteStatus: data.status, output: data.output ?? null };
+    },
   };
 }
 /** Ledger reservation must commit BEFORE any external call. Existing ambiguous
@@ -65,19 +84,5 @@ export function skyvernClient({ baseURL, apiKey, fetchImpl = fetch, timeoutMs = 
 export async function dispatchBrowserWorkflow({ client, ledger, allowedWorkflowIds, approvalKey, action, approval }) {
   const request = browserRequest(action, allowedWorkflowIds), requestHash = digest(request);
   verifyApproval(approval, { actionKey: action.actionKey, requestHash }, approvalKey);
-  const reservation = await ledger.reserve(action.actionKey, requestHash);
-  if (!reservation.created) {
-    if (reservation.requestHash !== requestHash) throw new WorkflowError('action_key_payload_conflict');
-    if (!reservation.remoteId) throw new WorkflowError('submission_outcome_unknown');
-    return client.get(reservation.remoteId);
-  }
-  try {
-    const result = await client.submit(request);
-    await ledger.submitted(action.actionKey, requestHash, result.remoteId);
-    return result;
-  } catch {
-    // If the write itself failed, the earlier intent still prevents replay.
-    await ledger.unknown(action.actionKey, requestHash).catch(() => {});
-    throw new WorkflowError('submission_outcome_unknown');
-  }
+  return dispatchWriteOnce({ client, ledger, actionKey: action.actionKey, requestHash, request });
 }

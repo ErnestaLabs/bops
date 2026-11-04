@@ -17,7 +17,8 @@ const install = `acceptance-${randomBytes(8).toString('hex')}`;
 const token = randomBytes(32).toString('hex');
 const marker = `PRIVATE_TASK_${randomBytes(8).toString('hex')}`;
 const delegationMarker = `PRIVATE_DELEGATION_${randomBytes(8).toString('hex')}`;
-let delegateBotId, handoffIssued = false;
+const triggerJoinMarker = `PRIVATE_TRIGGER_JOIN_${randomBytes(8).toString('hex')}`;
+let delegateBotId, handoffIssued = false, triggerToolCalls = 0, triggerSubmissions = 0, triggerSubmission;
 const browserMarker = `PRIVATE_BROWSER_${randomBytes(8).toString('hex')}`;
 const chatMarker = `PRIVATE_CHAT_${randomBytes(8).toString('hex')}`;
 const logdir = resolve(process.env.BOPS_ACCEPTANCE_LOG_DIR || join(root, '.scratch/app-acceptance'));
@@ -38,6 +39,22 @@ function jsonSchemaValue(s = {}) {
   if (type === 'null') return null;
   return 'acceptance';
 }
+const triggerServer = createServer(async (req, res) => {
+  try {
+    assert.equal(req.method, 'POST');
+    assert.equal(req.url, '/api/v1/tasks/ernesta-approved-browser-workflow/trigger');
+    assert.equal(req.headers.authorization, 'Bearer trigger-test-secret');
+    const chunks = []; for await (const part of req) chunks.push(part);
+    const body = JSON.parse(Buffer.concat(chunks));
+    triggerSubmissions++; triggerSubmission = body;
+    assert.match(body.options?.idempotencyKey ?? '', /^[a-f0-9]{64}$/);
+    assert.equal(body.payload?.canonicalWorkflowId, 'submit-form');
+    assert.equal(body.payload?.approval?.actionKey, body.options.idempotencyKey);
+    assert.match(body.payload?.approval?.signature ?? '', /^[a-f0-9]{64}$/);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: 'run_trigger_acceptance' }));
+  } catch (e) { res.writeHead(500); res.end(String(e)); }
+});
 const provider = createServer(async (req, res) => {
   try {
     assert.equal(req.method, 'POST'); assert.equal(req.url, '/v1/chat/completions');
@@ -48,7 +65,22 @@ const provider = createServer(async (req, res) => {
     assert.equal(body.stream, false);
     const names = (body.tools || []).map(x => x.function?.name);
     let content = JSON.stringify(body.messages).includes(browserMarker) ? browserMarker : chatMarker, tool_calls;
-    if (body.messages[0]?.content?.includes?.('PRIVATE_CONTEXT_COMPACTION')) {
+    if (JSON.stringify(body.messages).includes(triggerJoinMarker) && names.includes('queue_workflow')) {
+      const queued = body.messages.find(m => m.role === 'tool' && typeof m.content === 'string' && m.content.includes('run_trigger_acceptance'));
+      if (queued) {
+        content = triggerJoinMarker;
+      } else {
+        assert.equal(++triggerToolCalls, 1, 'Chief must propose the Trigger workflow only once');
+        tool_calls = [{ id: 'queue_workflow_acceptance', type: 'function', function: { name: 'queue_workflow', arguments: JSON.stringify({
+          canonicalWorkflowId: 'submit-form',
+          executorWorkflowId: 'acceptance-browser-flow',
+          objectId: 'acceptance-form-42',
+          operation: 'submit',
+          parameters: { url: 'https://example.com/form', prompt: 'Submit the already reviewed acceptance form exactly once.' }
+        }) } }];
+        content = null;
+      }
+    } else if (body.messages[0]?.content?.includes?.('PRIVATE_CONTEXT_COMPACTION')) {
       compactRequests++;
       assert.equal(body.tools, undefined, 'Compaction must offer no executable tools');
       content = `The task wrote ${marker} into /workspace/private-acceptance.txt. Preserve this observed result; do not repeat the command. No external actions were authorized.`;
@@ -92,6 +124,8 @@ async function stop(child) {
   if (child.exitCode === null) { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }
 }
 try {
+  await listen(triggerServer);
+  const triggerEndpoint = `http://127.0.0.1:${triggerServer.address().port}`;
   await listen(provider);
   const endpoint = `http://127.0.0.1:${provider.address().port}/v1`;
   const portServer = createServer(); await listen(portServer); const port = portServer.address().port;
@@ -99,7 +133,7 @@ try {
   const base = `http://127.0.0.1:${port}`;
   // Deliberately put the data directory only in the file: regression for load order.
   const envfile = join(temp, 'private.env');
-  writeFileSync(envfile, `BOPS_PRIVATE_DATA_DIR=${data}\nBOPS_INFERENCE_BASE_URL=${endpoint}\nBOPS_INFERENCE_MODEL=acceptance-model\nBOPS_PRIVATE_INSTALL_ID=${install}\nBOPS_UI_TOKEN=${token}\nBOPS_PRIVATE_COMPUTER_ACTIONS=1\nBOPS_WORKER_NETWORK=none\n`, { mode: 0o600 });
+  writeFileSync(envfile, `BOPS_PRIVATE_DATA_DIR=${data}\nBOPS_INFERENCE_BASE_URL=${endpoint}\nBOPS_INFERENCE_MODEL=acceptance-model\nBOPS_PRIVATE_INSTALL_ID=${install}\nBOPS_UI_TOKEN=${token}\nBOPS_PRIVATE_COMPUTER_ACTIONS=1\nBOPS_WORKER_NETWORK=none\nTRIGGER_API_URL=${triggerEndpoint}\nTRIGGER_SECRET_KEY=trigger-test-secret\nERNESTA_LEDGER_DATABASE_URL=postgresql://acceptance/ledger\nWORKFLOW_APPROVAL_KEY=${'a'.repeat(64)}\nSKYVERN_API_BASE_URL=http://127.0.0.1:8999\nSKYVERN_API_KEY=sky-test\nSKYVERN_ALLOWED_WORKFLOW_IDS=acceptance-browser-flow\n`, { mode: 0o600 });
   const env = { ...process.env, BOPS_PRIVATE_ENV_FILE: envfile, PORT: String(port), ELECTRON_SKIP_BINARY_DOWNLOAD: '1', NEXT_TELEMETRY_DISABLED: '1' };
   for (const k of ['BOPS_PRIVATE_DATA_DIR','BOPS_INFERENCE_BASE_URL','BOPS_INFERENCE_MODEL','BOPS_UI_TOKEN']) delete env[k];
   for (const k of ['ORGO_API_KEY','OPENAI_API_KEY','OPENAI_EXECUTOR_API_KEY','TYPESAFE_API_KEY','HONCHO_API_KEY','COMPOSIO_API_KEY','TREG_TOKEN','AGENTMAIL_API_KEY','AGENTPHONE_API_KEY','TAILSCALE_AUTH_KEY']) env[k] = '';
@@ -166,6 +200,35 @@ try {
   const ids = execFileSync('docker', ['ps', '--filter', `label=ernesta.install=${install}`, '--format', '{{.Names}}'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
   assert.equal(ids.length, 1);
   assert.equal(execFileSync('docker', ['exec', ids[0], 'cat', '/workspace/private-acceptance.txt'], { encoding: 'utf8' }), marker);
+  // Exercise the actual Chief -> Bops approval -> self-hosted Trigger bridge.
+  const triggerTask = await call('/api/sessions', { botId: bot.id, goal: `${triggerJoinMarker}: Queue the approved form workflow through the canonical workforce tool.`, title: 'Chief Trigger acceptance', model: 'acceptance-model', speed: 'default' });
+  let approval;
+  for (let i = 0; i < 120; i++) {
+    const state = (await call('/api/state')).state;
+    const s = state.sessions.find(x => x.id === triggerTask.id);
+    if (s?.status === 'failed') throw new Error(`Chief Trigger task failed before approval: ${s.error}`);
+    approval = state.appApprovals?.find(x => x.threadId === triggerTask.id && x.action?.startsWith('Queue '));
+    if (approval) break;
+    await sleep(500);
+  }
+  assert.ok(approval, 'Chief workflow call must pause in the real Bops approval system');
+  assert.equal(triggerSubmissions, 0, 'No Trigger request may leave before owner approval');
+  assert.match(approval.preview, /submit-form@1/);
+  assert.match(approval.preview, /acceptance-browser-flow/);
+  await call('/api/apps/approvals', { id: approval.id, reply: 'once' });
+  let triggerFinished;
+  for (let i = 0; i < 120; i++) {
+    const state = (await call('/api/state')).state;
+    const s = state.sessions.find(x => x.id === triggerTask.id);
+    if (s?.status === 'failed') throw new Error(`Chief Trigger task failed after approval: ${s.error}`);
+    if (s?.status === 'done') { triggerFinished = s; break; }
+    await sleep(500);
+  }
+  assert.ok(triggerFinished, 'Approved Chief workflow task must finish');
+  assert.equal(triggerFinished.answer, triggerJoinMarker);
+  assert.equal(triggerSubmissions, 1, 'Owner approval must cause exactly one Trigger submission');
+  assert.equal(triggerSubmission.options.idempotencyKey, triggerSubmission.payload.action.actionKey);
+  assert.equal(triggerToolCalls, 1);
   // Exercise delegation through the real chat tool path, not a direct task POST.
   execFileSync('docker', ['exec', ids[0], 'sh', '-c', 'printf main-only > /workspace/main-only.txt']);
   const specialist = await call('/api/bots', { name: 'Acceptance specialist', role: 'File operations', ownComputer: true });
@@ -268,13 +331,14 @@ try {
     await browser.close(); browser = undefined; browserUI = true;
   }
   await stop(serverProcess);
-  const evidence = { passed: true, productionBuild: true, existingStatePreservedDuringBuild: true, privateLogin: true, chat: true, task: true, realDockerOutput: true, realDockerFile: true, existingScreenRoute: true, cleanShutdown: true, restartPersistence: true, specialistDelegation: true, separateWorkerVolumes: true, scheduledRoutine: true, teamRestartPersistence: true, taskCompaction: true, compactedContextSurvivesRestart: true, noToolReplayAfterCompaction: true, telemetryDisabled: true, browserReplyAndDesktop: browserUI, browserUI, providerRequests: received, providerType: 'local deterministic test server, not a live hosted model' };
+  const evidence = { passed: true, productionBuild: true, chiefToTriggerApproval: true, triggerSubmissions, existingStatePreservedDuringBuild: true, privateLogin: true, chat: true, task: true, realDockerOutput: true, realDockerFile: true, existingScreenRoute: true, cleanShutdown: true, restartPersistence: true, specialistDelegation: true, separateWorkerVolumes: true, scheduledRoutine: true, teamRestartPersistence: true, taskCompaction: true, compactedContextSurvivesRestart: true, noToolReplayAfterCompaction: true, telemetryDisabled: true, browserReplyAndDesktop: browserUI, browserUI, providerRequests: received, providerType: 'local deterministic test server, not a live hosted model' };
   writeFileSync(join(logdir, 'result.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));
 } finally {
   await browser?.close();
   for (const child of [...children]) await stop(child);
   provider.closeAllConnections(); await new Promise(r => provider.close(r));
+  triggerServer.closeAllConnections(); await new Promise(r => triggerServer.close(r));
   writeFileSync(join(logdir, 'app.log'), log);
   // Delete only freshly-created, uniquely labelled test containers and their test volumes.
   try {

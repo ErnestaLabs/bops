@@ -12,7 +12,7 @@ explicitly marked SIMULATION and make no service requests.
 To create a portable, offline HTML copy:
 
 ```sh
-node private-runtime/workflows/export-map.mjs /absolute/path/workforce-map.html
+node private-runtime/workflows/export-control-map.mjs /absolute/path/workforce-map.html
 ```
 
 The single source of truth is the compact `private-runtime/workflows/catalog.json`.
@@ -21,15 +21,20 @@ The contract expander materializes explicit per-step timeouts, retries and evide
 steps and the new adapter/control contracts. This is a starter operational
 catalogue, not a claim to enumerate every possible business process.
 
-## Existing map and CLI compatibility
+## One execution path
 
-The earlier `/workflows.html` design map, `catalog.mjs`, filesystem dispatch journal,
-`skyvern.mjs` task adapter and owner CLI remain unchanged. The `/workflow-map` view
-adds the 24-workflow contract catalogue and published-workflow integration. The new
-`skyvern-client.mjs` and `postgres-ledger.mjs` are for the native Trigger task;
-they do not replace the single-host CLI. Do not submit the same business action
-through both dispatch paths: each has a separate reservation store. Consolidate
-workflow bindings and event ownership before activating production triggers.
+There used to be two, with separate reservation stores: a filesystem journal plus
+an owner CLI that posted to Skyvern's task API, and the Postgres-ledger Trigger
+task. The same business action could therefore be submitted twice by two
+mechanisms. The journal path (`ledger.mjs`, `skyvern.mjs`, `cli.mjs`) is retired.
+`approve.mjs` survives because it only writes an approval file and never submits.
+
+What remains, in dispatch order: `queue_workflow` (canonical id, allowlist,
+credential check) -> owner approval in Bops -> `workforce-dispatch.mjs` signs
+that exact action -> `trigger-client.mjs` performs one POST with the action key as
+the Trigger idempotency key -> `ernesta-approved-browser-workflow` ->
+`skyvern-client.mjs` -> `dispatchWriteOnce` -> `postgres-ledger.mjs`. Nothing else
+submits, and the `/workflow-map` view reads that same catalogue.
 
 ## Architecture and ownership
 

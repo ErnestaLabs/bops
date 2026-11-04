@@ -1,0 +1,37 @@
+name: Workforce map
+on:
+  push:
+    branches: [feat/private-provider-foundation, feat/workforce-control-map]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+      - name: All private runtime contract tests
+        run: node --test private-runtime/test/*.test.mjs
+      - run: npm ci
+      - run: npx --no-install playwright install --with-deps chromium
+      - name: Connected canvas and navigation acceptance
+        run: node private-runtime/workflows/browser-smoke.mjs
+      - name: Portable map
+        run: node private-runtime/workflows/export-map.mjs .scratch/workforce-map/workforce-control-map.html
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: workforce-map-evidence
+          path: .scratch/workforce-map
+          include-hidden-files: true
+          retention-days: 7

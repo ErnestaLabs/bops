@@ -2,20 +2,26 @@
   "name": "ernesta-workforce-orchestration",
   "private": true,
   "type": "module",
+  "version": "0.1.0",
   "scripts": {
     "check": "tsc --noEmit",
     "dev": "trigger.dev dev",
-    "deploy": "trigger.dev deploy"
+    "deploy": "trigger.dev deploy",
+    "slice:standin": "node ../../private-runtime/workflows/slice.mjs --stand-in",
+    "slice:standin:lost": "node ../../private-runtime/workflows/slice.mjs --stand-in --lose-response",
+    "slice:live": "node ../../private-runtime/workflows/slice.mjs",
+    "acceptance:standin": "node ../../private-runtime/workflows/acceptance.mjs --stand-in",
+    "acceptance:live": "node ../../private-runtime/workflows/acceptance.mjs --live"
   },
   "dependencies": {
     "@trigger.dev/sdk": "4.8.3",
     "pg": "8.23.1"
   },
   "devDependencies": {
-    "trigger.dev": "4.8.3",
-    "typescript": "5.9.3",
-    "@types/pg": "8.23.1",
     "@types/node": "20.19.43",
-    "playwright": "1.64.0-alpha-1790635538000"
+    "@types/pg": "8.23.1",
+    "playwright": "1.64.0-alpha-1790635538000",
+    "trigger.dev": "4.8.3",
+    "typescript": "5.9.3"
   }
 }

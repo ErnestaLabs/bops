@@ -35,9 +35,9 @@ jobs:
       - name: Native Trigger task typecheck
         working-directory: integrations/trigger
         run: npm run check
-      - name: Real Postgres dispatch and replay tests
+      - name: Real Postgres dispatch, replay and lost-response tests
         working-directory: integrations/trigger
-        run: node --test test/ledger.test.mjs
+        run: node --test test/ledger.test.mjs test/uncertain-send.test.mjs
         env:
           ERNESTA_LEDGER_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/workflow_contract_test
       - name: Install browser for authenticated map acceptance
@@ -47,7 +47,7 @@ jobs:
         working-directory: integrations/trigger
         run: node --test test/map-browser.test.mjs
       - name: Export exact catalog visual
-        run: node private-runtime/workflows/export-map.mjs "$RUNNER_TEMP/workforce-map.html"
+        run: node private-runtime/workflows/export-control-map.mjs "$RUNNER_TEMP/workforce-map.html"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
