@@ -126,13 +126,28 @@ does not technically make the browser read-only. Use an explicitly selected host
 vision-capable non-OpenAI/non-xAI model; disclose selected prompts/screenshots sent
 to it. No local model or anti-bot bypass service is added.
 
-## Trigger adapter
+## Trigger adapter and Chief dispatch
 
 `integrations/trigger` is isolated from the Bops dependency graph and pins the SDK
-and CLI to 4.8.3. It declares two tasks: validate/inspect a mapped workflow, and observe
-an EXISTING Skyvern run. They have explicit attempt/duration/concurrency settings.
-They do not submit business actions or activate schedules. A successful observation
-task does not imply a successful business outcome; the output says so explicitly.
+and CLI to 4.8.3. Its deployed `ernesta-approved-browser-workflow` task runs the
+shared browser orchestration against the action ledger; contract inspection and
+read-only Skyvern observation remain separate tasks.
+
+When the complete self-hosted Trigger, ledger, approval and Skyvern configuration is
+present, only the main/Chief bot is offered `queue_workflow`. A model may propose the
+canonical workflow, stable business object, operation and allowlisted executor
+workflow. Bops computes the stable action key/request hash and pauses through its
+existing owner-approval mechanism. No Trigger request is made before approval.
+After an Allow-once/approved resume, Bops signs that exact request and POSTs once to
+the self-hosted Trigger v4 task endpoint with the action key as Trigger's idempotency
+key. Ambiguous Trigger submission is reported as outcome unknown and is not retried
+by the bridge.
+
+Specialists and outside/member-originated tasks are not offered this top-level tool.
+Credentials are rejected from workflow parameters and never put in the approval
+preview. Trigger re-validates the canonical workflow ID, and the execution task
+re-validates the Skyvern workflow allowlist. Trigger completion is still not an
+independent business-outcome verification.
 
 ```sh
 cd integrations/trigger
