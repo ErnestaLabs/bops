@@ -221,6 +221,27 @@ export const browserMcp = (port: number, dir: string) => {
  */
 export const CUA_DRIVER = process.env.CUA_DRIVER_PATH ?? join(homedir(), ".local/bin/cua-driver");
 export const cuaDriverHere = () => existsSync(CUA_DRIVER);
+
+/**
+ * Optional Vercel Labs agent-desktop MCP provider for read-only observation of native Mac apps.
+ * Disabled by default. It is exposed only for a task on this Mac when the owner has enabled
+ * Bops Full access. Unlike the existing Cua proxy, this provider has no Bops app/window policy
+ * yet: expose only observation tools, never click/type/clipboard/keyboard tools.
+ * Set BOPS_MAC_UI_PROVIDER=agent-desktop and install agent-desktop in PATH, or set its full path.
+ */
+export const MAC_AGENT_DESKTOP_TOOLS = [
+  "desktop_snapshot",
+  "desktop_find",
+  "desktop_get",
+  "desktop_is",
+] as const;
+export const macUiProvider = () => process.env.BOPS_MAC_UI_PROVIDER === "agent-desktop" ? "agent-desktop" as const : "cua" as const;
+const agentDesktopBin = () => process.env.BOPS_AGENT_DESKTOP_PATH?.trim() || "agent-desktop";
+const executableExists = (name: string) => name.includes("/")
+  ? existsSync(name)
+  : (process.env.PATH ?? "").split(delimiter).some((dir) => !!dir && existsSync(join(dir, name)));
+export const macUiAvailable = () => macUiProvider() === "agent-desktop" ? executableExists(agentDesktopBin()) : cuaDriverHere();
+export const macUiAllowedTools = () => macUiProvider() === "agent-desktop" ? [...MAC_AGENT_DESKTOP_TOOLS] : MAC_UI_TOOLS;
 /**
  * Seeing and using windows (a browser's too: its pages are in the accessibility tree), and `page` to read a
  * tab's text. Not what moves the user's pointer, fronts or quits apps, touches the clipboard or changes
@@ -259,12 +280,19 @@ const macUiScript = () => real(join(process.cwd(), "vm/mac-ui-mcp.mjs"));
  * processes can read). Payment approvals, "Just do it" and turning on Full access need a check outside a
  * task's reach (Touch ID or the user's password) before the proxy can be relied on for them.
  */
-export const macUiMcp = (dir: string) => ({
-  type: "stdio",
-  command: "/usr/bin/env",
-  args: [...(asNode ? ["ELECTRON_RUN_AS_NODE=1"] : []), process.execPath, macUiScript(), "--cua", CUA_DRIVER],
-  cwd: join(dir, "workspace"),
-});
+export const macUiMcp = (dir: string) => macUiProvider() === "agent-desktop"
+  ? {
+      type: "stdio",
+      command: agentDesktopBin(),
+      args: ["mcp"],
+      cwd: join(dir, "workspace"),
+    }
+  : {
+      type: "stdio",
+      command: "/usr/bin/env",
+      args: [...(asNode ? ["ELECTRON_RUN_AS_NODE=1"] : []), process.execPath, macUiScript(), "--cua", CUA_DRIVER],
+      cwd: join(dir, "workspace"),
+    };
 
 /** What the executor's environment keeps of the server's: nothing secret, nothing that only makes the server run. */
 const KEPT_ENV = ["USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE"];

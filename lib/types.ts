@@ -1196,7 +1196,7 @@ export type Session = {
    * `fn`: its apps and business data are function tools Bops answers (sessions.ts agentTool), so a call that needs the user's OK
    * pauses it; one from before had them as MCP tools, and starts a fresh agent session.
    */
-  env?: { id: string; remoteUrl: string; workspace?: string; fullAccess?: boolean; sockets?: string; apps?: boolean; data?: boolean; ui?: boolean | "bops"; display?: number; fn?: true };
+  env?: { id: string; remoteUrl: string; workspace?: string; fullAccess?: boolean; sockets?: string; apps?: boolean; data?: boolean; ui?: boolean | "bops" | "agent-desktop"; display?: number; fn?: true };
   /**
    * Run by a CLI agent of its bot's (lib/server/cli-agents.ts) rather than Bops agent: which account (Brain.id;
    * "-" for OpenCode, which has none) and agent, on which computer, and the CLI's own session there (`cli`:
