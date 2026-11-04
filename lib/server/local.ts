@@ -246,6 +246,20 @@ export const MAC_UI_TOOLS = [
   "zoom",
   "page",
 ];
+
+/** Explicitly opted-in, app-scoped Vercel Labs Agent Desktop alternative. */
+export const AGENT_DESKTOP_TOOLS = ["desktop_snapshot", "desktop_click", "desktop_set_value", "desktop_scroll_to"];
+const agentDesktopBin = () => process.env.BOPS_AGENT_DESKTOP_BIN ?? "";
+const agentDesktopApps = () => process.env.BOPS_AGENT_DESKTOP_APPS ?? "";
+export const agentDesktopHere = () =>
+  agentDesktopBin().startsWith("/") && existsSync(agentDesktopBin()) && agentDesktopApps().trim().length > 0;
+export const macUiBackend = (): "cua" | "agent-desktop" | null => {
+  if (process.env.BOPS_MAC_UI_BACKEND === "agent-desktop") return agentDesktopHere() ? "agent-desktop" : null;
+  return cuaDriverHere() ? "cua" : null;
+};
+export const macUiAllowedTools = () => macUiBackend() === "agent-desktop" ? AGENT_DESKTOP_TOOLS : MAC_UI_TOOLS;
+const agentDesktopScript = () => real(join(process.cwd(), "vm/agent-desktop-mcp.mjs"));
+
 /** The script a Mac task's tools reach Cua Driver through, which passes on only what a task may do (vm/mac-ui-mcp.mjs). */
 const macUiScript = () => real(join(process.cwd(), "vm/mac-ui-mcp.mjs"));
 /**
@@ -262,7 +276,10 @@ const macUiScript = () => real(join(process.cwd(), "vm/mac-ui-mcp.mjs"));
 export const macUiMcp = (dir: string) => ({
   type: "stdio",
   command: "/usr/bin/env",
-  args: [...(asNode ? ["ELECTRON_RUN_AS_NODE=1"] : []), process.execPath, macUiScript(), "--cua", CUA_DRIVER],
+  args: [...(asNode ? ["ELECTRON_RUN_AS_NODE=1"] : []), process.execPath,
+    ...(macUiBackend() === "agent-desktop"
+      ? [agentDesktopScript(), "--bin", agentDesktopBin(), "--apps", agentDesktopApps()]
+      : [macUiScript(), "--cua", CUA_DRIVER])],
   cwd: join(dir, "workspace"),
 });
 
