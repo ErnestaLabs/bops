@@ -14,6 +14,7 @@ import { readSkill, READ_SKILL_TOOL } from "./workspace-skills";
 import { bot, patchSession, session, stateEpoch } from "./store";
 import { recordTokens, usageTags } from "./usage";
 import { othersThread, outsideThread, type AppApproval, type Session } from "@/lib/types";
+import { WORKFORCE_TOOL, runWorkforceTool, workforceToolAvailable } from "./workforce-tool";
 
 /**
  * A thread on a bot's Orgo computer, run on the Responses API's own `computer` tool: the model sees
@@ -157,6 +158,7 @@ async function steps(t: ComputerTurn, ws: { socket?: ResponsesSocket | null }): 
     ...DATA_TOOLS(b),
     ...(others ? [] : CRM_TOOLS(b)),
     ...(keyed.length ? [callApiTool(keyed, { getOnly: true })] : []),
+    ...(b.isMain && !outside && workforceToolAvailable() ? [WORKFORCE_TOOL] : []),
   ];
   const guard = newPageGuard();
   // A turn that was stopped mid-step, or paused at a call that needed the user's OK, owes OpenAI the outputs of the
@@ -704,6 +706,7 @@ function orStop<T>(t: ComputerTurn, work: Promise<T>): Promise<T> {
  */
 async function runFunction(t: ComputerTurn, o: OutputItem, guard: PageGuard = newPageGuard(), opts: { approved?: boolean } = {}): Promise<FunctionOutput | { pause: AskSpec }> {
   const s = session(t.sessionId)!;
+  const b = bot(s.botId)!;
   // A stranger's task has none of the owner's logins; anyone else's (a member's too) none of the CRM.
   const outside = strangersTask(t.sessionId);
   const others = outsideTask(t.sessionId);
@@ -761,6 +764,10 @@ async function runFunction(t: ComputerTurn, o: OutputItem, guard: PageGuard = ne
     } else if (o.name && DATA_TOOL_NAMES.has(o.name)) {
       t.step(o.name, o.name === "business_search" ? `looked up ${String(args.job ?? "business data")}` : o.name === "find_data" ? `looked for "${String(args.query ?? "").slice(0, 60)}" in business data` : `got ${String(args.endpoint_id ?? "data")}`);
       output = await orStop(t, runDataTool(s.botId, o.name, args, { sessionId: t.sessionId }, { approved: opts.approved }));
+    } else if (o.name === "queue_workflow" && b.isMain && !outside) {
+      if (!opts.approved) t.step("queue_workflow", `proposed canonical workflow ${String(args.canonicalWorkflowId ?? "")}`);
+      output = await orStop(t, runWorkforceTool(args, { approved: opts.approved }));
+      if (opts.approved) t.step("queue_workflow", `queued ${String(args.canonicalWorkflowId ?? "workflow")} through Trigger`);
     } else if (o.name && CRM_TOOL_NAMES.has(o.name) && !others) {
       t.step(o.name, crmStep(o.name, args));
       output = await orStop(t, runCrmTool(s.botId, o.name, args, { sessionId: t.sessionId }));
