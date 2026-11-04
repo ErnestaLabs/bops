@@ -12,7 +12,7 @@ import { AI_CREDIT_EMPTY, AI_CREDIT_LOW } from "@/cloud/protocol";
 import { BLOCKER_LABEL, botChatId, BRAINS_ON, CLI_NAMES, COMPACTED, computerStaysDown, DISPLAYS, isScreenWatch, live, MAIN_WORKSPACE, MAX_SCREENS, memberOf, memberThread, othersThread, outsideThread, ownerSent, pausedForOk, routineSent, threadCompactBlocked, threadCompacts, threadRunner, waitsForOk, workBot, workspaceOf, type AppApproval, type Bot, type CliKind, type MemberSaid, type Routine, type Session, type Takeover, type TaskRoute, type ThreadReply } from "@/lib/types";
 import type { MemberWho } from "@/lib/member-access";
 import { CloudError, creditsOut, executorKey, noteOutOfCredit, outOfCreditWords, outOfCreditError, shortOfCredit } from "./cloud";
-import { browserMcp, cdpPort, cuaDriverHere, currentUrl, ensureChrome, MAC_BROWSER_TOOLS, MAC_UI_TOOLS, macTaskPort, macUiMcp, navigate, startExecutor, stopExecutor, taskDir, taskSockets } from "./local";
+import { browserMcp, cdpPort, currentUrl, ensureChrome, MAC_BROWSER_TOOLS, macUiAllowedTools, macUiBackend, macTaskPort, macUiMcp, navigate, startExecutor, stopExecutor, taskDir, taskSockets } from "./local";
 import { relayNewComputer } from "./relay";
 import { computerAsleepError, computerWakingError, madeByThisServer, madeReady, orgo, OrgoError, screenId, wakeWaitMs, type OrgoScreen } from "./orgo";
 import { forgetPlan, holdFreeAgain, limitText, makeMainComputer, makeOwnComputer, orgoPlan, PlanLimit } from "./plan";
@@ -1977,7 +1977,7 @@ function macChromeNote(owner: string) {
  * `onMacChrome`: it works in a Chrome of its own on the Mac, which Bops doesn't watch for sign-ins. `vaultTool`: it has sign_in_from_vault.
  * `ui`: with Full access, it has the Mac tools (Cua Driver, local.ts MAC_UI_TOOLS) for the user's own apps and browsers.
  */
-function instructions(botName: string, role: string, mac: boolean, display: number, sharedWith?: string, apps = false, auto = false, full = false, computer = false, onMacChrome = false, vaultTool = false, ui = false, parts = true) {
+function instructions(botName: string, role: string, mac: boolean, display: number, sharedWith?: string, apps = false, auto = false, full = false, computer = false, onMacChrome = false, vaultTool = false, ui: boolean | "desktop" = false, parts = true) {
   const owner = ownerName();
   const appsLine = `For ${owner}'s email, calendar, documents, CRM and anything else they connected, use their apps (find_app_actions, then use_app; see "Your apps" below) before a website.`;
   // The fastest tool first: each one only for what the ones before it can't do. The screen is last.
@@ -2006,7 +2006,11 @@ function instructions(botName: string, role: string, mac: boolean, display: numb
           "Use the browser tools for websites; read pages with browser_snapshot rather than screenshots. Use the shell for files, data, code and the Mac itself.",
           `Drive ${owner}'s Mac apps (Messages, Notes, Mail, Calendar, Reminders, Finder, Music and the rest) from the shell: osascript (AppleScript or JavaScript for Automation), open, shortcuts run, mdfind, defaults. The first time you script an app, macOS may ask ${owner} to allow it: if a command fails with "not authorized", say so in one sentence and stop.`,
           `Work out of ${owner}'s sight: they're in Bops while you work, so never bring an app or window in front of them. Before scripting an app that isn't running, start it hidden (open -g -j -a Messages); never activate an app, never script clicks or keystrokes (System Events), and open files and links with open -g. If a step can only be done by bringing an app to the front, ask first.`,
-          ...(ui
+          ...(ui === "desktop"
+            ? [
+                `The Agent Desktop tools snapshot an explicitly allowed Mac app, then click, set_value or scroll_to by a ref from that verified snapshot. Use only approved apps, never Bops or protected apps. Snapshot again to verify every action. The tools cannot operate arbitrary apps, use the clipboard or press system keys. Stop before sending, purchasing, changing access or deleting without the owner\'s approval.`,
+              ]
+            : ui
             ? [
                 `The Mac tools (list_windows, get_window_state, then click, type_text, press_key, scroll… on what it found) see and use ${owner}'s own apps and windows in the background, without moving their pointer or bringing anything to the front. Use them for an app the shell can't script well, and for a website that needs ${owner}'s own browser (where they're signed in, or past a check that stops your Chrome): its pages are in get_window_state like any window, and page (get_text) reads a tab's text. Read a window with get_window_state before acting on it, and check it afterwards. Every call names its window (pid and window_id, from list_windows) and works in the background only. They refuse Bops itself, System Settings, Keychain Access, password managers, terminals and apps that run commands, remote sessions, AI agent apps, clipboard managers and Activity Monitor, and won't quit or close apps, windows or tabs, or copy, cut or paste: if a step needs one of those, say so and stop, and don't get there another way (the shell, osascript, cua-driver). ${owner} uses the same screen: work in a tab or window of your own, never in one they're typing in, and never close theirs. These replace System Events: don't script clicks or keystrokes any other way.`,
               ]
@@ -2183,7 +2187,7 @@ function memberNote(s: Session): string {
 function agentBrief(
   s: Session,
   b: Bot,
-  o: { mac: boolean; display: number; sharedWith?: string; apps: boolean; appTools: boolean; dataTools: boolean; full: boolean; onMac: boolean; vaultTool: boolean; ui: boolean; outside: boolean; memory: string; count: boolean; brain?: boolean },
+  o: { mac: boolean; display: number; sharedWith?: string; apps: boolean; appTools: boolean; dataTools: boolean; full: boolean; onMac: boolean; vaultTool: boolean; ui: boolean | "desktop"; outside: boolean; memory: string; count: boolean; brain?: boolean },
 ) {
   return [
     instructions(b.name, b.role, o.mac, o.display, o.sharedWith, o.apps, !!b.autoApprove, o.full, false, o.onMac, o.vaultTool, o.ui),
@@ -3077,7 +3081,9 @@ async function run(sessionId: string) {
     const appTools = fnApps;
         // With Full access, the user's own apps and browsers, through Cua Driver (local.ts MAC_UI_TOOLS), when it's installed:
     // behind Bops' own MCP server (vm/mac-ui-mcp.mjs). A thread whose agent session had Cua's own one starts a fresh session.
-    const macUi = full && cuaDriverHere();
+    const macBackend = full ? macUiBackend() : null;
+    const macUi = !!macBackend;
+    const uiId = macBackend === "agent-desktop" ? "agent-desktop" : macBackend === "cua" ? "bops" : undefined;
     const dataTools = fnData;
 
     // A thread picks its agent session back up; a new one gets a fresh agent session. So does a Mac
@@ -3104,7 +3110,7 @@ async function run(sessionId: string) {
             !!s.env?.data === fnData &&
             // Never an agent session that had Cua's own MCP server (ui true), with or without the Mac tools now.
             s.env?.ui !== true &&
-            (s.env?.ui === "bops") === macUi
+            s.env?.ui === uiId
           : s.env?.display === display && !!s.env?.apps === fnApps && !!s.env?.data === fnData);
     /**
      * One turn: the user's message in, the bot's answer out. `resume`: the answered request its run paused at
@@ -3150,7 +3156,7 @@ async function run(sessionId: string) {
               full,
               onMac,
               vaultTool: !mac && !!appsReach.get(computerId) && !outside,
-              ui: macUi,
+              ui: macBackend === "agent-desktop" ? "desktop" : macUi,
               outside: !!outside,
               memory,
               count: true,
@@ -3191,7 +3197,7 @@ async function run(sessionId: string) {
                     },
                 required: true,
               },
-              ...(macUi ? [{ type: "mcp", server_label: "mac", allowed_tools: MAC_UI_TOOLS, transport: macUiMcp(folder!), required: false }] : []),
+              ...(macUi ? [{ type: "mcp", server_label: "mac", allowed_tools: macUiAllowedTools(), transport: macUiMcp(folder!), required: false }] : []),
               // Its apps and business data, answered by this Bops (agentTool): a call that needs the user's OK pauses here.
               ...[...(fnApps ? APP_TOOLS(b) : []), ...(fnData ? DATA_TOOLS(b) : [])].map((t) => ({ type: "function", name: t.name, description: t.description, parameters: t.parameters })),
             ],
@@ -3204,7 +3210,7 @@ async function run(sessionId: string) {
             capability_directories: [`${workspace}/capabilities/skills`],
           },
         } as never, usageTags("session", b.id))) as unknown as { id: string; environment: { id: string; remote_url: string } };
-        patchSession(sessionId, { agentSessionId: created.id, env: { id: created.environment.id, remoteUrl: created.environment.remote_url, workspace, fn: true, ...(full ? { fullAccess: true } : {}), ...(sockets ? { sockets } : {}), ...(fnApps ? { apps: true } : {}), ...(fnData ? { data: true } : {}), ...(macUi ? { ui: "bops" as const } : {}), ...(mac ? {} : { display }) } });
+        patchSession(sessionId, { agentSessionId: created.id, env: { id: created.environment.id, remoteUrl: created.environment.remote_url, workspace, fn: true, ...(full ? { fullAccess: true } : {}), ...(sockets ? { sockets } : {}), ...(fnApps ? { apps: true } : {}), ...(fnData ? { data: true } : {}), ...(uiId ? { ui: uiId } : {}), ...(mac ? {} : { display }) } });
       }
       const { agentSessionId, env } = session(sessionId)! as Required<Pick<Session, "agentSessionId" | "env">>;
 
