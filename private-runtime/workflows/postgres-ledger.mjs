@@ -37,12 +37,18 @@ export function postgresLedger(pool) {
       });
     },
     /** Record an action that reconciliation proved already happened. Refuses to
-     * invent a success for an absent action, and closes one action only once. */
+     * invent a success for an absent action, and closes one action only once.
+     *
+     * Accepts SUBMITTING as well as OUTCOME_UNKNOWN: a worker killed between the
+     * external write and the receipt leaves exactly that row, and it is the same
+     * ambiguity as a lost response. Nobody survives to mark it unknown, so
+     * requiring OUTCOME_UNKNOWN here would make the crash unrecoverable.
+     */
     reconcile(actionKey, requestHash, remoteId) {
       hash(actionKey); hash(requestHash);
       if (typeof remoteId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(remoteId)) throw new WorkflowError('invalid_remote_id');
       return transaction(async db => {
-        const r = await db.query("UPDATE ernesta_workflow_actions SET status='SUBMITTED',remote_id=$3,updated_at=now() WHERE action_key=$1 AND request_hash=$2 AND status='OUTCOME_UNKNOWN' AND remote_id IS NULL RETURNING action_key", [actionKey,requestHash,remoteId]);
+        const r = await db.query("UPDATE ernesta_workflow_actions SET status='SUBMITTED',remote_id=$3,updated_at=now() WHERE action_key=$1 AND request_hash=$2 AND remote_id IS NULL AND status IN ('OUTCOME_UNKNOWN','SUBMITTING') RETURNING action_key", [actionKey,requestHash,remoteId]);
         if (r.rowCount !== 1) throw new WorkflowError('not_reconcilable');
         await db.query("INSERT INTO ernesta_workflow_events(action_key,event_type) VALUES($1,'RECONCILED')", [actionKey]);
         return { remoteId };

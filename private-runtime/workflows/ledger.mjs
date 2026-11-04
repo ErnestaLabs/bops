@@ -55,10 +55,13 @@ function journalLedger({ directory, reservationKey, intent, outcome }) {
     async unknown() {
       update({ state: 'outcome_unknown', errorCode: 'DISPATCH_ERROR', events: [{ event: 'reconciliation_required', at: now() }] });
     },
-    /** Record an action that reconciliation proved already happened, once. */
+    /** Record an action that reconciliation proved already happened, once.
+     * 'dispatching' is included because a process killed between the POST and
+     * the receipt leaves the journal in exactly that state, and it is the same
+     * ambiguity as a lost response. */
     async reconcile(_actionKey, _requestHash, remoteId) {
       const prior = read();
-      if (prior.state !== 'outcome_unknown') throw new WorkflowError('NOT_RECONCILABLE');
+      if (!['outcome_unknown', 'dispatching'].includes(prior.state)) throw new WorkflowError('NOT_RECONCILABLE');
       update({ state: 'running', providerRunId: remoteId, events: [{ event: 'reconciled', at: now(), providerRunId: remoteId }] });
       return { remoteId };
     },

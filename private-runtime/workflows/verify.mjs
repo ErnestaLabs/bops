@@ -19,6 +19,14 @@ export function closeVerified(from, evidence) {
   if (state !== 'VERIFYING') throw new WorkflowError('invalid_transition');
   return transition(state, 'SUCCEEDED', evidence);
 }
+/** Close a run as failed. A failure reached through RECONCILING is still a
+ * decision recorded against a real receipt, not a silent retry. */
+export function closeFailed(from, { code } = {}) {
+  if (typeof code !== 'string' || !code.trim()) throw new WorkflowError('failure_code_required');
+  let state = from;
+  if (state === 'OUTCOME_UNKNOWN') state = transition(state, 'RECONCILING');
+  return transition(state, 'FAILED');
+}
 /** A Skyvern run that reports "completed" is an observation, not an outcome.
  * The verifier re-reads the destination itself and requires the fields the
  * owner actually asked for, so a run that finished without producing them
