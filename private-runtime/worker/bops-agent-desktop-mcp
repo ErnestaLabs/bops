@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+display="${1:?display number required}"
+case "$display" in 99|100|101|102) ;; *) exit 2;; esac
+. /tmp/agent-desktop-session.env
+export DISPLAY=":$display"
+export AGENT_DESKTOP_HOME=/root/.agent-desktop
+exec agent-desktop mcp
