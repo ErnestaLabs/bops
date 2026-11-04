@@ -1,7 +1,7 @@
 FROM node:22-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium xvfb x11-utils openbox xdotool scrot imagemagick \
-    at-spi2-core dbus-x11 \
+    at-spi2-core dbus-x11 gnome-calculator \
     python3 python3-venv curl ca-certificates git jq procps \
     && rm -rf /var/lib/apt/lists/*
 # Versions are deliberately explicit. agent-desktop is a local Apache-2.0 desktop-control tool; it embeds no model.
