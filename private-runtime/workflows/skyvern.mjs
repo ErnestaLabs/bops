@@ -2,17 +2,22 @@
  * Inspected API source: Skyvern 9ba3f1db5b52400146dd71955763a994086dd8f1.
  */
 import { createHash } from 'node:crypto';
-export class WorkflowError extends Error {
-  constructor(code, uncertain = false) { super(code); this.code = code; this.uncertain = uncertain; }
+import { WorkflowError as ContractWorkflowError } from './contracts.mjs';
+import { selfHostedEndpoint } from './skyvern-client.mjs';
+/** One error type for the whole workflow runtime. This subclass only adds the
+ * transport ambiguity flag, so `instanceof` still matches a contract error
+ * whichever adapter raised it. */
+export class WorkflowError extends ContractWorkflowError {
+  constructor(code, uncertain = false) { super(code); this.name = 'WorkflowError'; this.uncertain = uncertain; }
 }
 const deny = ['skyvern.com','openai.com','orgo.ai','bops.bot','x.ai'];
+/** Delegates to the shared self-hosted endpoint policy so there is exactly one
+ * definition of which hosts may receive work. The extra check here is that an
+ * API origin must be a root origin, not a deep path. */
 export function serviceURL(value) {
-  let u; try { u = new URL(value); } catch { throw new WorkflowError('INVALID_SERVICE_URL'); }
-  if (!['http:','https:'].includes(u.protocol) || u.username || u.password || u.search || u.hash || u.pathname !== '/') throw new WorkflowError('INVALID_SERVICE_URL');
-  const h = u.hostname.toLowerCase().replace(/\.$/, '');
-  if (deny.some(d => h === d || h.endsWith(`.${d}`))) throw new WorkflowError('HOSTED_VENDOR_BLOCKED');
-  if (u.protocol === 'http:' && !['localhost','127.0.0.1','[::1]','skyvern'].includes(h)) throw new WorkflowError('HTTPS_REQUIRED');
-  return u.origin;
+  let url; try { url = new URL(value); } catch { throw new WorkflowError('INVALID_SERVICE_URL'); }
+  if (url.pathname !== '/' || url.username || url.password || url.search || url.hash) throw new WorkflowError('INVALID_SERVICE_URL');
+  try { return selfHostedEndpoint(value); } catch { throw new WorkflowError('INVALID_SERVICE_URL'); }
 }
 const text = (x, max) => typeof x === 'string' && x.trim().length > 0 && x.length <= max;
 export function requestBody(value) {
