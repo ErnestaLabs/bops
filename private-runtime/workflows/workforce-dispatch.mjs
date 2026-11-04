@@ -1,16 +1,10 @@
 import { actionIdentity, digest, signApproval, WorkflowError } from './contracts.mjs';
 import { canonicalCatalog } from './catalog.mjs';
-import { browserRequest } from './skyvern-client.mjs';
+import { browserRequest, rejectSecrets } from './skyvern-client.mjs';
 import { approvalEnv, skyvernEnv } from './env.mjs';
 import { triggerTask } from './trigger-client.mjs';
 const TASK_ID='ernesta-approved-browser-workflow';
 const obj=value=>value&&typeof value==='object'&&!Array.isArray(value);
-const SECRET_KEY=/(?:password|passwd|secret|token|cookie|authorization|api[_-]?key|private[_-]?key)/i;
-function rejectSecrets(value,path='parameters'){
-  if(Array.isArray(value)){for(let i=0;i<value.length;i++)rejectSecrets(value[i],`${path}[${i}]`);return;}
-  if(!obj(value))return;
-  for(const [k,v] of Object.entries(value)){if(SECRET_KEY.test(k))throw new WorkflowError('workflow_parameter_secret_forbidden');rejectSecrets(v,`${path}.${k}`);}
-}
 const text=(value,max=256)=>typeof value==='string'&&value.trim()&&value.length<=max;
 export const CANONICAL_WORKFLOW_IDS=Object.freeze(canonicalCatalog.workflows.map(w=>w.id));
 export function triggerConfigured(env=process.env){

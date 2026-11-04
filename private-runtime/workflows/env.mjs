@@ -13,8 +13,8 @@ const str = value => (typeof value === 'string' && value.trim() ? value.trim() :
 /** Canonical name first, then the legacy spelling from the other branch. */
 const either = (env, canonical, legacy) => str(env[canonical]) ?? str(env[legacy]);
 
-/** Skyvern credentials for the deployed dispatch path and the operator CLI.
- * The API origin is the service root; each client appends its own /v1 path. */
+/** Skyvern credentials for the one deployed dispatch path.
+ * The API origin is the service root; the adapter appends its own /v1 path. */
 export function skyvernEnv(env = process.env) {
   const baseURL = either(env, 'SKYVERN_API_BASE_URL', 'BOPS_SKYVERN_BASE_URL');
   const apiKey = either(env, 'SKYVERN_API_KEY', 'BOPS_SKYVERN_API_KEY');

@@ -28,7 +28,7 @@ export const browserWorkflow = task({
   retry: { maxAttempts: 1 },
   maxDuration: 1200,
   run: async (payload: Payload) => {
-    const canonical = canonicalCatalog.workflows.find(w => w.id === payload.canonicalWorkflowId);
+    const canonical = canonicalCatalog.workflows.find((w: { id: string }) => w.id === payload.canonicalWorkflowId);
     if (!canonical) throw new AbortTaskRunError("unknown_canonical_workflow");
     const triggerURL = selfHostedEndpoint(process.env.TRIGGER_API_URL);
     if (new URL(triggerURL).hostname.endsWith("trigger.dev")) throw new AbortTaskRunError("Customer-owned Trigger endpoint required");

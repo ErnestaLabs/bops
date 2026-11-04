@@ -18,10 +18,12 @@ prompts, names, secrets and raw errors. Configuration-present is not health or
 connectivity. The standalone preview has no live API and never invents live data.
 The portable HTML is the same catalogue/state machine/UI bundled without a CDN.
 
-The earlier `docs/WORKFLOW_CONTROL_MAP.md` and owner-side CLI are preserved.
-This board expands that operating map; the existing `skyvern.mjs`/`ledger.mjs`
-remain the single production-facing submission implementation. The visual state
-model is a rehearsal contract, not a second live scheduler or approval authority.
+This board expands the operating map in `docs/WORKFLOW_CONTROL_MAP.md`. There is
+one production-facing submission implementation — the Trigger task over
+`skyvern-client.mjs` + `postgres-ledger.mjs`; the older single-host CLI and its
+filesystem journal were retired so that no second reservation store exists. The
+visual state model is a rehearsal contract, not a second live scheduler or
+approval authority.
 
 ## Scope
 
@@ -76,47 +78,33 @@ An LLM's plan or confidence cannot stand in for an external receipt. The simulat
 synthetic verifier is NOT a production verifier. AI choices and external websites
 remain nondeterministic; the states, permissions and recovery paths are explicit.
 
-## Skyvern adapter and owner-side CLI
+## Skyvern adapter and owner approval
 
-The existing `private-runtime/workflows/skyvern.mjs` and `ledger.mjs` from the
-concurrent branch work are reused, not overwritten with another dispatcher.
-They provide self-hosted submission, observation and cancellation requests; a
-cancel request does not certify rollback or completed cancellation. The transport
-has no cloud default, no automatic POST retries, bounded responses and sanitized
-errors. Unknown provider states fail closed.
+`private-runtime/workflows/skyvern-client.mjs` is the only Skyvern adapter. It
+provides self-hosted submission, observation and cancellation requests; a cancel
+request does not certify rollback or completed cancellation. The transport has no
+cloud default, no automatic POST retries, bounded responses and sanitized errors,
+and unknown provider states fail closed.
 
-Configure the customer instance on the server, never in chat or Git:
+The owner never handles the Skyvern key. Work is queued from Bops through the
+approval card, and the Trigger task builds the adapter from the customer instance
+settings. Configure those on the server, never in chat or Git; the full list is
+in `private-runtime/private.env.example` (`SKYVERN_API_BASE_URL`, `SKYVERN_API_KEY`,
+`SKYVERN_ALLOWED_WORKFLOW_IDS`, the `TRIGGER_*` pair,
+`ERNESTA_LEDGER_DATABASE_URL`, `WORKFLOW_APPROVAL_KEY`).
 
-```dotenv
-BOPS_SKYVERN_BASE_URL=http://127.0.0.1:8000
-BOPS_SKYVERN_API_KEY=<customer-instance-key>
-BOPS_SKYVERN_ACCOUNT_SCOPE=<customer-account-id>
-BOPS_PRIVATE_DATA_DIR=/absolute/persistent/customer/data
-```
+The reservation binds the Ernesta action key, payload hash and step budget, and
+is committed to Postgres before the POST. Reusing an action returns its receipt
+rather than another submission; changed payloads conflict, and partial
+reservations stay unresolved. No public submission route or live-submit button is
+added by this board. Approval expiry is enforced where the approval is signed;
+this board only rehearses the states.
 
-Use the existing reviewed request file and operator commands:
-
-```sh
-node private-runtime/workflows/cli.mjs plan /absolute/path/request.json
-# Review the entire request and returned approval hash before starting.
-node private-runtime/workflows/cli.mjs start /absolute/path/request.json --approve <reviewed-hash>
-node private-runtime/workflows/cli.mjs status <recorded-run-id>
-node private-runtime/workflows/cli.mjs cancel <recorded-run-id>
-```
-
-The reservation binds action ID, account, service origin, normalized payload and
-step budget. It is durably written before POST. Reusing an action returns its
-receipt rather than another submission; changed payloads conflict, and partial
-reservations remain unresolved. No public submission route or live-submit button
-is added by this board. The CLI is an owner-operated interface, not a remote
-multi-user approval service. The board's approval-expiry checks are a rehearsed
-contract; the current CLI hash is not a time-bound remote approval token.
-
-The journal is single-host storage, not a distributed database. Do NOT mount it
-into many independent Trigger workers. Integrate a transactional authenticated
-bridge before distributed dispatch, with production approval expiry, permissions,
-independent verifiers, retention and cancel reconciliation. The board calls none
-of these mutating methods and stores no live credentials.
+The ledger is transactional storage shared by every Trigger worker, which is why
+the filesystem journal could not simply be mounted everywhere. Remaining work is
+production approval expiry, permissions, independent verifiers, retention and
+cancel reconciliation. The board calls none of these mutating methods and stores
+no live credentials.
 
 Skyvern must have independently enforced egress and credential scopes. The adapter's
 start-URL validation does not constrain redirects, page links, uploads or model

@@ -17,11 +17,15 @@ export function selfHostedEndpoint(value) {
  * working unchanged, so neither branch's .env has to be rewritten. */
 const apiBase = value => selfHostedEndpoint(value).replace(/\/v1$/, '');
 function id(value) { if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(value)) throw new WorkflowError('invalid_remote_id'); return value; }
-function rejectSecrets(value, depth = 0) {
+/** The one credential rule for every parameter bag that can reach an executor.
+ * Both the Skyvern request builder and the Trigger dispatch plan call this, so a
+ * field rejected before approval cannot slip through the other door afterwards. */
+export const SECRET_KEY = /(password|passwd|secret|token|cookie|authorization|api[\s_-]?key|private[\s_-]?key)/i;
+export function rejectSecrets(value, depth = 0) {
   if (depth > 16) throw new WorkflowError('parameters_too_deep');
   if (!value || typeof value !== 'object') return;
   for (const [key, v] of Object.entries(value)) {
-    if (/(password|secret|authorization|api.?key|access.?token|cookie)/i.test(key)) throw new WorkflowError('use_credential_references');
+    if (SECRET_KEY.test(key)) throw new WorkflowError('use_credential_references');
     rejectSecrets(v, depth + 1);
   }
 }

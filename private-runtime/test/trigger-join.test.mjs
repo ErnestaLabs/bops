@@ -12,6 +12,6 @@ test('Chief tool stays hidden until the complete private execution config exists
   }
 });
 test('workflow parameters cannot smuggle credentials into Trigger or approval state',()=>{
-  assert.throws(()=>workflowDispatchPlan({canonicalWorkflowId:'submit-form',executorWorkflowId:'wpid_invoice',objectId:'x',operation:'submit',parameters:{url:'https://example.com',prompt:'go',password:'nope'}},env),e=>e.code==='workflow_parameter_secret_forbidden');
-  assert.throws(()=>workflowDispatchPlan({canonicalWorkflowId:'submit-form',executorWorkflowId:'wpid_invoice',objectId:'x',operation:'submit',parameters:{url:'https://example.com',prompt:'go',nested:{apiKey:'nope'}}},env),e=>e.code==='workflow_parameter_secret_forbidden');
+  assert.throws(()=>workflowDispatchPlan({canonicalWorkflowId:'submit-form',executorWorkflowId:'wpid_invoice',objectId:'x',operation:'submit',parameters:{url:'https://example.com',prompt:'go',password:'nope'}},env),e=>e.code==='use_credential_references');
+  assert.throws(()=>workflowDispatchPlan({canonicalWorkflowId:'submit-form',executorWorkflowId:'wpid_invoice',objectId:'x',operation:'submit',parameters:{url:'https://example.com',prompt:'go',nested:{apiKey:'nope'}}},env),e=>e.code==='use_credential_references');
 });

@@ -32,29 +32,30 @@ No label certifies a customer production deployment.
 - A self-hosted Skyvern REST adapter for start, observation and cancellation, with
   explicit endpoint/key configuration, bounded responses/timeouts, a fixed native
   Skyvern engine and no cloud defaults, redirect following or request retries.
-- An owner-side dispatch journal that reserves an action before issuing its POST.
+- A transactional action ledger (`postgres-ledger.mjs`) that reserves an action
+  before issuing its POST.
   A repeated action ID with the same request returns its existing reservation;
   different content conflicts. Partial reservations and uncertain outcomes are not
   automatically reclaimed. Receipts contain identifiers and status, not prompts,
   passwords, page output, signed artifact URLs or API keys.
-- An operator CLI and a synthetic example request. No live service is contacted by
-  `plan`. `start` requires acknowledgement of the exact plan hash.
+- A synthetic example request used by the local stand-in harness. The operator CLI
+  and its `plan`/`start` approval flow are retired: dispatch now runs through the
+  Trigger task after the owner approves in Bops.
 - A Trigger.dev read-only observation task template, pinned for SDK 4.8.3. Its retries
   repeat GETs, never submission. It is not deployed or connected to Bops scheduling.
-- Tests covering the adapter, local dispatch journal and catalog. A real local HTTP
+- Tests covering the adapter, ledger and catalog. A real local HTTP
   fixture checks routes and authentication. This is not a running Skyvern instance
   and not a live LLM quality test.
 
-The dispatch journal is narrow application glue, not a replacement scheduler.
-Do not put it on Trigger's ephemeral worker filesystem or share it between independent
-hosts. Run it on the persistent owner-controlled Bops host. Before distributed
-activation, place this operation behind an authenticated, tenant-scoped control
-service backed by transactional storage. That bridge is mapped, not implemented here.
+The ledger is transactional storage shared by Trigger workers, not a replacement
+scheduler, and never an ephemeral worker filesystem. The dispatch call is
+nevertheless a single-writer operation on one action key; multi-tenant fan-out
+would need a control service in front of it.
 
-The approval hash detects changed input. It is NOT an authentication token, signature
-or proof that a human approved. Authorization currently comes from the local operator's
-access to the host, secrets and CLI. Do not expose this hash check as a public approval
-API. Signed, expiring approvals and verified identity belong at the control boundary.
+The approval is now a signed, expiring token (`contracts.signApproval`) minted only
+after the owner approves in Bops, and it binds the exact action key and request
+hash. The model can request a workflow but cannot sign one. Keep the signing key
+out of worker and browser processes.
 
 ## Skyvern integration settings
 
@@ -123,19 +124,19 @@ BOPS_PRIVATE_DATA_DIR=/absolute/persistent/customer/data
 Use a stable account scope across key rotations. Never reuse it for a different
 Skyvern account. Requests use the API origin without a `/v1` suffix.
 
+This document describes the pre-Trigger single-host design. The owner CLI and its
+filesystem journal have since been retired: dispatch runs through the Trigger task
+with the Postgres ledger, so no second reservation store exists. The same code is
+exercised locally against a wire stand-in:
+
 ```sh
-export BOPS_PRIVATE_ENV_FILE=/absolute/path/to/customer.env
-node private-runtime/workflows/cli.mjs plan private-runtime/workflows/example-request.json
-# Review the FULL request file, not merely the printed hash. Then explicitly approve:
-node private-runtime/workflows/cli.mjs start private-runtime/workflows/example-request.json --approve <approvalHash>
-node private-runtime/workflows/cli.mjs status <providerRunId>
-node private-runtime/workflows/cli.mjs cancel <providerRunId>
+ERNESTA_LEDGER_DATABASE_URL=postgresql://... npm run private:acceptance -- --stand-in
 ```
 
-`start` can perform real browser actions and incur hosted inference costs. It is
-never run automatically by setup, the visual map or the tests. Choose a unique action
-ID for each intended operation and retain it for retries/reconciliation. Do not work
-around a reservation by inventing another action ID or deleting its directory.
+Nothing submits a real browser action automatically — not setup, not the visual
+map, not the tests. Each intended operation keeps one stable action key for
+retries and reconciliation; inventing a new key to get past a reservation is the
+one thing the ledger cannot defend against.
 
 `completed` from Skyvern maps to `awaiting_verification`, not `succeeded`. Output
 schema validation and independent business verification are recipe-specific work;
@@ -143,7 +144,7 @@ the adapter deliberately does not invent verification or treat the existence of 
 screenshot as proof. Cancellation acknowledgement maps to `cancel_requested`, and
 observation of a canceled run still requires reconciliation of earlier effects.
 
-If dispatch fails, the journal reports `outcome_unknown`. Inspect the remote system,
+If dispatch fails, the ledger records `OUTCOME_UNKNOWN`. Inspect the remote system,
 locate a run or external receipt, and record an owner-reviewed reconciliation. There
 is intentionally no automatic replay or force-reset command. This prevents the local
 adapter from knowingly repeating a reserved dispatch; it is NOT a guarantee of
