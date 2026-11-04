@@ -34,6 +34,7 @@ function command(a: Args): string[] {
     case "launch": if (!safeText(a.app,120) || !/^[A-Za-z0-9._+-]+$/.test(a.app!)) throw new Error("launch requires a simple app identifier."); return ["launch",a.app!];
     case "wait": { const ms=Number(a.milliseconds); if (!Number.isInteger(ms)||ms<50||ms>30000) throw new Error("wait requires 50-30000 milliseconds."); return ["wait",String(ms)]; }
   }
+  throw new Error("Unreachable desktop action.");
 }
 export async function runAgentDesktop(computerId: string, display: number, args: Args, signal?: AbortSignal): Promise<string> {
   if (!/^ernesta-[a-f0-9]{24}$/.test(computerId)) throw new Error("Agent Desktop is available only on a private Ernesta computer.");
