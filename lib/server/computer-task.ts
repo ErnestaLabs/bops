@@ -15,6 +15,7 @@ import { bot, patchSession, session, stateEpoch } from "./store";
 import { recordTokens, usageTags } from "./usage";
 import { othersThread, outsideThread, type AppApproval, type Session } from "@/lib/types";
 import { WORKFORCE_TOOL, runWorkforceTool, workforceToolAvailable } from "./workforce-tool";
+import { AGENT_DESKTOP_TOOL, runAgentDesktop } from "./agent-desktop";
 
 /**
  * A thread on a bot's Orgo computer, run on the Responses API's own `computer` tool: the model sees
@@ -745,6 +746,9 @@ async function runFunction(t: ComputerTurn, o: OutputItem, guard: PageGuard = ne
     } else if (o.name === "sign_in_from_vault" && !outside) {
       t.step("vault", "signing in with a saved login");
       output = await orStop(t, import("./vault").then((v) => v.vaultSignIn(s.botId, t.display, t.sessionId)));
+    } else if (o.name === "desktop_accessibility") {
+      t.step("desktop", `used accessibility: ${String(args.action ?? "observe")}`);
+      output = await orStop(t, runAgentDesktop(t.computerId, t.display, args as Parameters<typeof runAgentDesktop>[2], t.signal));
     } else if (o.name === "read_skill") {
       const name = String(args.name ?? "").trim();
       const file = typeof args.file === "string" && args.file.trim() ? args.file.trim() : null;
