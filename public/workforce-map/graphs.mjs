@@ -136,6 +136,7 @@ export function systemGraph() {
  {id:'browser',...S('Website actions','Skyvern'),x:1000,y:70,open:'submit-form'},
  {id:'api',...S('Business API actions','Customer connectors'),x:1000,y:265,open:'send-approved'},
  {id:'computer',...S('Files and local tools','Private Docker'),x:1000,y:460,open:'delegate'},
+ {id:'desktop',...S('Native desktop apps','Vercel Agent Desktop'),x:1000,y:610,open:'delegate'},
  {id:'verify',...D('Outcome verified?','Evidence verifier'),x:1270,y:265,open:'reconcile'},
  {id:'report',...E('Return result + evidence'),x:1500,y:265},
  {id:'evidence',...S('Redacted run evidence','Evidence archive'),x:1270,y:70,open:'audit'},
@@ -144,7 +145,7 @@ export function systemGraph() {
  {id:'blocked',...S('Stop for owner / repair','Human operator','stop'),x:730,y:530,open:'repair'},
  {id:'unknown',...S('Reconcile before retry','Action ledger','failure'),x:1270,y:530,open:'reconcile'},
  ].map(n=>({...n,w:184,h:90,origin:'Architecture proposal',detail:'Double-click to open the associated workflow. This is a design relationship, not proof of a deployed integration.'}));
- const edges=[];[['owner','chief'],['chief','queue'],['queue','gate'],['gate','browser'],['gate','api'],['gate','computer'],['browser','verify'],['api','verify'],['computer','verify'],['verify','report']].forEach(([a,b])=>connect(edges,a,b,a==='gate'?'Allowed':a==='verify'?'Verified':''));
+ const edges=[];[['owner','chief'],['chief','queue'],['queue','gate'],['gate','browser'],['gate','api'],['gate','computer'],['gate','desktop'],['browser','verify'],['api','verify'],['computer','verify'],['desktop','verify'],['verify','report']].forEach(([a,b])=>connect(edges,a,b,a==='gate'?'Allowed':a==='verify'?'Verified':''));
  connect(edges,'verify','evidence','Redacted evidence','normal');connect(edges,'evidence','improve','Offline improvement','normal');connect(edges,'improve','candidate','Candidate harness','normal');connect(edges,'candidate','chief','Adopt for future runs only','recovery',{viaY:20,fromPort:'top',toPort:'top'});
  connect(edges,'gate','blocked','No','exception');connect(edges,'verify','unknown','Mismatch / uncertain','exception');connect(edges,'unknown','verify','Evidence found','recovery',{viaX:1485,fromPort:'right',toPort:'right'});
  return {id:'system',title:'How the workforce connects',category:'Architecture',nodes,edges,paths:[],mode:'Architecture proposal · services not implied live'};

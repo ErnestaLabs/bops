@@ -15,6 +15,8 @@ try {
   assert.equal((await runtime.api.screens(id)).length, 4);
   const shell = await runtime.api.bash(id, 'printf private-runtime-ok', 5);
   assert.equal(shell.exit_code, 0); assert.equal(shell.output, 'private-runtime-ok');
+  const agentDesktop = await runtime.api.bash(id, 'agent-desktop version', 10);
+  assert.equal(agentDesktop.exit_code, 0); assert.match(agentDesktop.output, /1\.1\.0/);
   const html = Buffer.from('<!doctype html><title>Ernesta Docker acceptance</title><h1>Private worker test</h1>').toString('base64');
   const setup = await runtime.api.bash(id, `mkdir -p /workspace/acceptance; echo ${html} | base64 -d > /workspace/acceptance/index.html; cd /workspace/acceptance; nohup python3 -m http.server 8800 --bind 127.0.0.1 >/tmp/acceptance-http.log 2>&1 </dev/null &`, 10);
   assert.equal(setup.exit_code, 0);
@@ -31,7 +33,7 @@ try {
   const png = Buffer.from(await runtime.api.screenshot(id, 'screen-99', 1, 'png'));
   assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
   assert.equal(png.readUInt32BE(16), 1280); assert.equal(png.readUInt32BE(20), 960);
-  console.log(JSON.stringify({ passed: true, screens: 4, shell: true, keyboardNavigation: true, screenshot: [1280,960] }));
+  console.log(JSON.stringify({ passed: true, screens: 4, shell: true, agentDesktop: '1.1.0', keyboardNavigation: true, screenshot: [1280,960] }));
 } finally {
   if (id) {
     await runtime.api.remove(id);
