@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { workflows, states, workflow, transition } from '../workflows/catalog.mjs';
 import { serviceURL, requestBody, summarizeRun, skyvernClient, digest } from '../workflows/skyvern.mjs';
-import { plan, dispatchOnce } from '../workflows/ledger.mjs';
+import { plan, dispatchOnce, reconcileJournal } from '../workflows/ledger.mjs';
 const req = { url: 'https://example.com/', prompt: 'Extract the page title.', max_steps: 5, data_extraction_schema: { type: 'object' } };
 const input = { actionId: 'read-2026-11-03', accountScope: 'customer-one', baseUrl: 'http://127.0.0.1:8000', request: req };
 function temp(t) { const dir = mkdtempSync(join(tmpdir(), 'workflow-test-')); t.after(() => rmSync(dir, { recursive: true, force: true })); return dir; }
@@ -91,4 +91,17 @@ test('every source reference exists and rendered map is deterministic', async t 
   const target=join(temp(t),'map.html');
   renderWorkflowMap(target); renderWorkflowMap(target,true);
   assert.ok(readFileSync(target,'utf8').includes('DESIGN MAP'));
+});
+
+test('a file-journal action stuck outcome_unknown reconciles once and never reopens', async t => {
+  const directory = temp(t);
+  const client = { origin: input.baseUrl, start: async () => { throw new Error('lost response'); } };
+  const args = { ...input, directory, client, approvalHash: plan(input).approvalHash };
+  const stuck = await dispatchOnce(args);
+  assert.equal(stuck.state, 'outcome_unknown');
+  assert.deepEqual(await reconcileJournal({ ...args, providerRunId: 'tsk_found' }), { remoteId: 'tsk_found' });
+  await assert.rejects(reconcileJournal({ ...args, providerRunId: 'tsk_found' }), /NOT_RECONCILABLE/);
+  const receipt = JSON.parse(readFileSync(join(directory, readdirSync(directory)[0], 'receipt.json'), 'utf8'));
+  assert.equal(receipt.providerRunId, 'tsk_found');
+  assert.deepEqual(receipt.events.map(e => e.event), ['dispatch_reserved', 'reconciliation_required', 'reconciled']);
 });
