@@ -108,15 +108,19 @@ result cannot be read as a live one. In stand-in mode the summary reports
 
 These are missing from the chain, not merely unproven:
 
-- **No Agent Desktop executor.** `desktop/` is Bops' own Electron shell, not an
-  executor adapter. Nothing in the workflow runtime can hand work to a native
-  desktop app, so today the chain has exactly one executor: Skyvern.
-- **No API-connector executor.** `verifySentMessage()` is a read-back contract
-  with no sender behind it. No connector client exists.
-- **Chief is not wired to dispatch.** Chief/specialist live in `lib/server`
-  (the product); the Trigger task takes a pre-signed approval payload. "Chief
-  decides what to do" is real in Bops but is not yet the thing that creates the
-  run.
+- **Agent Desktop is installed but cannot be dispatched to.** `agent-desktop@1.1.0`
+  is in the private worker image and `docker-smoke.mjs` asserts the binary runs,
+  and the taxonomy names it as an execution surface. Nothing in the workflow
+  runtime hands it work: there is no client, no task, and no `dispatchWriteOnce`
+  caller for it. So the acceptance chain still has exactly one executor, Skyvern.
+- **No API-connector sender.** `verifySentMessage()` is a read-back contract with
+  no sender behind it. No connector client exists, so no connector workflow can
+  be dispatched.
+- **Chief is not wired to dispatch.** The Bops app has no Trigger client at all —
+  nothing in `app/` or `lib/` imports `@trigger.dev/sdk` — and the task takes a
+  pre-signed approval payload. So "Chief decides what to do" is real in the
+  product while "Trigger creates the run" is still a separate world; that join is
+  the missing link in the chain as drawn.
 
 ## Do not
 

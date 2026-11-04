@@ -11,14 +11,20 @@ const req = { url: 'https://example.com/', prompt: 'Extract the page title.', ma
 const input = { actionId: 'read-2026-11-03', accountScope: 'customer-one', baseUrl: 'http://127.0.0.1:8000', request: req };
 function temp(t) { const dir = mkdtempSync(join(tmpdir(), 'workflow-test-')); t.after(() => rmSync(dir, { recursive: true, force: true })); return dir; }
 test('every mapped workflow has an owner gate, evidence, repair and exact source', () => {
-  assert.equal(new Set(workflows.map(x => x.id)).size, 20);
+  // catalog.json is the single registry now: 24 flows, one taxonomy.
+  assert.equal(new Set(workflows.map(x => x.id)).size, 24);
   for (const w of workflows) { assert.ok(w.steps.length >= 3); for (const k of ['approval','evidence','repair','source','readiness']) assert.ok(w[k]); }
-  assert.equal(workflow('browser-read').readiness, 'adapter'); assert.throws(() => workflow('missing'));
+  assert.equal(workflow('submit-form').readiness, 'mapped'); assert.equal(workflow('chat').readiness, 'existing-core');
+  assert.throws(() => workflow('missing'));
 });
 test('business outcomes cannot jump from queued or unknown to success', () => {
   for (const [from, targets] of Object.entries(states)) for (const to of targets) assert.ok(to in states, `${from} -> ${to}`);
   assert.throws(() => transition('queued', 'succeeded')); assert.throws(() => transition('outcome_unknown', 'dispatching'));
-  assert.equal(transition('awaiting_verification', 'succeeded'), 'succeeded');
+  // Nothing reaches success without independent evidence, and the old
+  // awaiting_verification alias is gone with the single taxonomy.
+  assert.throws(() => transition('awaiting_verification', 'succeeded'));
+  assert.throws(() => transition('verifying', 'succeeded'));
+  assert.equal(transition('verifying', 'succeeded', { verified: true, verifier: 'destination-readback', receiptId: 'receipt_1' }), 'succeeded');
 });
 test('explicit self-hosted endpoint; reject cloud defaults and credential-bearing URLs', () => {
   for (const url of [undefined,'https://api.skyvern.com','https://api.openai.com','https://a.orgo.ai','https://api.x.ai','http://remote.example','https://user:pass@private.example','https://private.example?key=bad']) assert.throws(() => serviceURL(url));
