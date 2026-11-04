@@ -20,16 +20,19 @@ export function createGuard(apps) {
     if (!args || typeof args !== "object" || Array.isArray(args)) return { ok: false, why: "Arguments must be an object." };
     if (name === "desktop_snapshot") {
       if (!approved(args.app)) return { ok: false, why: "A named, approved app is required." };
-      if (["root", "surface", "window_id", "windowId"].some((k) => args[k] !== undefined))
-        return { ok: false, why: "Only an app-wide snapshot is permitted." };
+      if (Object.keys(args).some((k) => k !== "app"))
+        return { ok: false, why: "Only the approved app can be selected for a snapshot." };
       return { ok: true };
     }
     // Desktop actions require an element from a previously verified app snapshot.
     const ref = typeof args.ref === "string" ? args.ref : "";
     const match = ref.match(REF);
     if (!match || !snapshots.has(match[1])) return { ok: false, why: "Use a ref from an approved app snapshot." };
-    if (Object.keys(args).some((k) => /^(headed|trace|debug|session|screenshot|clipboard|app|window|surface)$/i.test(k)))
-      return { ok: false, why: "Unexpected action scope or output option." };
+    const keys = name === "desktop_set_value" ? ["ref", "value"] : ["ref"];
+    if (Object.keys(args).some((k) => !keys.includes(k)))
+      return { ok: false, why: "Unexpected action argument or scope." };
+    if (name === "desktop_set_value" && (typeof args.value !== "string" || args.value.length > 4000))
+      return { ok: false, why: "Value must be a bounded string." };
     return { ok: true };
   }
   function remember(name, args, result) {
