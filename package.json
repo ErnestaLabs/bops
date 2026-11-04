@@ -24,7 +24,9 @@
     "upstream:dev": "next dev",
     "upstream:build": "next build",
     "upstream:start": "next start",
-    "upstream:fast": "next build && next start --port 3210"
+    "upstream:fast": "next build && next start --port 3210",
+    "client:adapt": "node private-runtime/onboarding/cli.mjs adapt",
+    "client:activate": "node private-runtime/onboarding/cli.mjs activate"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
