@@ -3193,6 +3193,19 @@ async function run(sessionId: string) {
                 required: true,
               },
               ...(macUi ? [{ type: "mcp", server_label: "mac", allowed_tools: MAC_UI_TOOLS, transport: macUiMcp(folder!), required: false }] : []),
+              ...(!mac
+                ? [{
+                    type: "mcp",
+                    server_label: "desktop",
+                    transport: {
+                      type: "stdio",
+                      command: "/usr/local/bin/bops-agent-desktop-mcp",
+                      args: [String(display)],
+                      cwd: "/workspace",
+                    },
+                    required: false,
+                  }]
+                : []),
               // Its apps and business data, answered by this Bops (agentTool): a call that needs the user's OK pauses here.
               ...[...(fnApps ? APP_TOOLS(b) : []), ...(fnData ? DATA_TOOLS(b) : [])].map((t) => ({ type: "function", name: t.name, description: t.description, parameters: t.parameters })),
               ...(b.isMain && !outside && workforceToolAvailable() ? [WORKFORCE_TOOL] : []),
