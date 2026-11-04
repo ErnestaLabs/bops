@@ -14,7 +14,7 @@ function rejectSecrets(value,path='parameters'){
 const text=(value,max=256)=>typeof value==='string'&&value.trim()&&value.length<=max;
 export const CANONICAL_WORKFLOW_IDS=Object.freeze(canonicalCatalog.workflows.map(w=>w.id));
 export function triggerConfigured(env=process.env){
-  return !!(env.TRIGGER_API_URL&&env.TRIGGER_SECRET_KEY&&env.BOPS_PRIVATE_INSTALL_ID&&env.WORKFLOW_APPROVAL_KEY&&(env.SKYVERN_API_BASE_URL||env.BOPS_SKYVERN_BASE_URL)&&(env.SKYVERN_API_KEY||env.BOPS_SKYVERN_API_KEY)&&env.SKYVERN_ALLOWED_WORKFLOW_IDS);
+  return !!(env.TRIGGER_API_URL&&env.TRIGGER_SECRET_KEY&&env.BOPS_PRIVATE_INSTALL_ID&&env.WORKFLOW_APPROVAL_KEY&&env.ERNESTA_LEDGER_DATABASE_URL&&(env.SKYVERN_API_BASE_URL||env.BOPS_SKYVERN_BASE_URL)&&(env.SKYVERN_API_KEY||env.BOPS_SKYVERN_API_KEY)&&env.SKYVERN_ALLOWED_WORKFLOW_IDS);
 }
 function canonicalWorkflow(id){const w=canonicalCatalog.workflows.find(x=>x.id===id);if(!w)throw new WorkflowError('unknown_canonical_workflow');return w;}
 export function workflowDispatchPlan(args,env=process.env){
