@@ -1,9 +1,12 @@
 FROM node:22-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium xvfb x11-utils openbox xdotool scrot imagemagick \
+    at-spi2-core dbus-x11 \
     python3 python3-venv curl ca-certificates git jq procps \
     && rm -rf /var/lib/apt/lists/*
-# Versions are deliberately explicit; no vendor agent/executor is installed.
+# Versions are deliberately explicit. agent-desktop is a local Apache-2.0 desktop-control tool; it embeds no model.
+RUN npm install -g --no-audit --no-fund agent-desktop@1.1.0 \
+    && agent-desktop version >/tmp/agent-desktop-version.json
 RUN mkdir -p /opt/private /opt/bops /workspace /var/log/bops \
     && mkdir -p /opt/bops/pw && cd /opt/bops/pw && npm install --no-audit --no-fund @playwright/mcp@0.0.83
 COPY private-runtime/worker/display.py /opt/private/display.py
