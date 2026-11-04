@@ -19,7 +19,7 @@ export const WORKFORCE_TOOL = {
       parameters: { type: "object", additionalProperties: true, description: "Executor parameters. Never include credentials or secrets." },
     },
   },
-  strict: true,
+  strict: false,
 } as const;
 
 export const workforceToolAvailable = () => process.env.BOPS_PRIVATE_RUNTIME === "1" && triggerConfigured(process.env);
