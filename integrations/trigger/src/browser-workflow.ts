@@ -4,8 +4,10 @@ import { selfHostedEndpoint, skyvernClient } from "../../../private-runtime/work
 import { postgresLedger } from "../../../private-runtime/workflows/postgres-ledger.mjs";
 import { runApprovedBrowserWorkflow } from "../../../private-runtime/workflows/browser-run.mjs";
 import { approvalEnv, ledgerEnv, skyvernEnv } from "../../../private-runtime/workflows/env.mjs";
+import { canonicalCatalog } from "../../../private-runtime/workflows/catalog.mjs";
 
 type Payload = {
+  canonicalWorkflowId: string;
   action: { actionKey: string; workflowId: string; parameters: Record<string, unknown> };
   approval: { actionKey: string; requestHash: string; expiresAt: number; signature: string };
 };
@@ -26,6 +28,8 @@ export const browserWorkflow = task({
   retry: { maxAttempts: 1 },
   maxDuration: 1200,
   run: async (payload: Payload) => {
+    const canonical = canonicalCatalog.workflows.find(w => w.id === payload.canonicalWorkflowId);
+    if (!canonical) throw new AbortTaskRunError("unknown_canonical_workflow");
     const triggerURL = selfHostedEndpoint(process.env.TRIGGER_API_URL);
     if (new URL(triggerURL).hostname.endsWith("trigger.dev")) throw new AbortTaskRunError("Customer-owned Trigger endpoint required");
     if (!process.env.ERNESTA_LEDGER_DATABASE_URL) throw new AbortTaskRunError("Action ledger must be configured and migrated first");
@@ -36,6 +40,7 @@ export const browserWorkflow = task({
     try {
       const client = skyvernClient({ baseURL, apiKey });
       const ledger = postgresLedger(pool);
+      metadata.set("canonicalWorkflowId", canonical.id);
       metadata.set("businessState", "VALIDATING");
       return await runApprovedBrowserWorkflow({
         client,
