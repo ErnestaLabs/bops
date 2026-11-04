@@ -93,4 +93,9 @@ export function activateDraft(file,approvedHash,env=process.env){
   const target=join(dir,'active.json'),tmp=`${target}.${randomBytes(6).toString('hex')}.tmp`;
   writeFileSync(tmp,JSON.stringify(active,null,2),{mode:0o600,flag:'wx'}); renameSync(tmp,target); return {target,active};
 }
+export function draftPath(clientId,reviewHash,env=process.env){
+  if(!/^[a-f0-9]{64}$/.test(reviewHash)) throw new Error('invalid_review_hash');
+  return join(clientVersionDir(env),safeId(clientId),`draft-${reviewHash}.json`);
+}
+export function activateStoredDraft(clientId,reviewHash,env=process.env){return activateDraft(draftPath(clientId,reviewHash,env),reviewHash,env);}
 export function loadActive(clientId,env=process.env){return JSON.parse(readFileSync(join(clientVersionDir(env),safeId(clientId),'active.json'),'utf8'));}
